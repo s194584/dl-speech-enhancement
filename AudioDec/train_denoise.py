@@ -16,9 +16,10 @@ from losses import FeatureMatchLoss
 from losses import GeneratorAdversarialLoss
 from losses import MultiMelSpectrogramLoss
 from clearml import Task
+import soundfile as sf
 
 task = Task.init('dl-speech-enhancement', 'fixed-error')
-
+logger = task.get_logger()
 
 ENVIRONMENT = 'LAPTOP'
 # ENVIRONMENT = 'HPC'
@@ -225,15 +226,8 @@ train_noise_dataloader = DataLoader(noise_splits['train'], batch_size=2, shuffle
 steps = 0
 # Training loop #####################
 for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
-    if i_batch == 2:
-        break
     for j_batch, noise_sample_batch in enumerate(iter(train_noise_dataloader)):
-        if j_batch == 2:
-            break
-
         # Perform training on pseudo batch
-        # Goal: (B,C,1,T)
-
         x_mixed, y_clean = mix_clean_noise_batch(clean_sample_batch, noise_sample_batch)
         x_mixed = x_mixed.permute(0,2,1).float()  # (B,C,T)
         y_clean = y_clean.permute(0,2,1).float()  # (B,C,T)
@@ -244,16 +238,14 @@ for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
         x_target = y_clean.to(device)
 
         # fix codebook
-        print("Fix codebook")
+        # print("Fix codebook")
         generator_model.quantizer.codebook.eval()
 
         # initialize generator loss
         gen_loss = 0.0
 
         # main genertor operation
-        print("Main generator operation")
-
-        ### TODO: channel first
+        # print("Main generator operation")
         y_nc, zq, z, vqloss, perplexity = generator_model(x_noisy)
 
         # perplexity info
@@ -261,7 +253,7 @@ for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
 
         # vq loss
         # gen_loss += self._vq_loss(vqloss, mode=mode)
-        print("VQ_loss")
+        # print("VQ_loss")
         vqloss = torch.sum(vqloss)
         vqloss *= config["lambda_vq_loss"]
         gen_loss += vqloss
@@ -269,9 +261,9 @@ for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
         # metric loss
         # gen_loss += self._metric_loss(y_nc, x_c, mode=mode)
 
-        print("Mel_loss")
-        print(y_nc.shape)
-        print(x_target.shape)
+        # print("Mel_loss")
+        # print(y_nc.shape)
+        # print(x_target.shape)
         mel_loss = criterion["mel"](y_nc, x_target)
         mel_loss *= config["lambda_mel_loss"]
         # self._record_loss('mel_loss', mel_loss, mode=mode)
@@ -280,7 +272,7 @@ for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
         # update generator
         # self._record_loss('generator_loss', gen_loss, mode=mode)
         # self._update_generator(gen_loss)
-        print("Optimizer")
+        # print("Optimizer")
         optimizer["generator"].zero_grad()
         gen_loss.backward()
 
@@ -293,5 +285,17 @@ for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
         shceduler["generator"].step()
 
         # update counts
-        print(steps)
+        if(steps % 100 == 0):
+            print(steps)
+            y = y_nc[0].permute(1,0).squeeze().detach().numpy()
+            path = os.path.join('training_output','debug.wav')
+            sf.write(
+                path,
+                y,
+                sample_rate,
+                "PCM_16",
+            )
+            logger.report_media('audio', 'tada',iteration=steps,
+            local_path = path
+            )
         steps += 1
