@@ -17,6 +17,8 @@ from losses import GeneratorAdversarialLoss
 from losses import MultiMelSpectrogramLoss
 from clearml import Task
 import soundfile as sf
+import matplotlib.pyplot as plt
+
 
 task = Task.init('dl-speech-enhancement', 'fixed-error')
 logger = task.get_logger()
@@ -57,7 +59,7 @@ def trim_audio(batch):
 
 def define_splits(dataset, generator, train_percentage=0.7, val_percentage=0.15, test_percentage=0.15):
     split_datasets = random_split(dataset, [train_percentage, val_percentage, test_percentage], generator=generator)
-    return {'train': split_datasets[0], 'val': split_datasets[1], 'test': split_datasets[2]}
+    return {'train': split_datasets[0], 'validation': split_datasets[1], 'test': split_datasets[2]}
 
 
 def load_config(path_to_config):
@@ -221,81 +223,164 @@ noise_splits = define_splits(noise_dataset, generator)
 
 train_clean_dataloader = DataLoader(clean_splits['train'], batch_size=2, shuffle=True, generator=generator)
 train_noise_dataloader = DataLoader(noise_splits['train'], batch_size=2, shuffle=True, generator=generator)
+
+val_clean_dataloader = DataLoader(clean_splits['validation'], batch_size=2, shuffle=True, generator=generator)
+val_noise_dataloader = DataLoader(noise_splits['validation'], batch_size=2, shuffle=True, generator=generator)
+
+test_clean_dataloader = DataLoader(clean_splits['test'], batch_size=2, shuffle=True, generator=generator)
+test_noise_dataloader = DataLoader(noise_splits['test'], batch_size=2, shuffle=True, generator=generator)
 # Loading Trainer ###################
 
+def mix_and_permute_to_device():
+    # Perform training on pseudo batch
+    x_mixed, y_clean = mix_clean_noise_batch(clean_sample_batch, noise_sample_batch)
+    x_mixed = x_mixed.permute(0,2,1).float()  # (B,C,T)
+    y_clean = y_clean.permute(0,2,1).float()  # (B,C,T)
+
+    # Send input through model
+    x_noisy = x_mixed.to(device)
+    x_target = y_clean.to(device)
+    return x_noisy, x_target
+
+
+
+
+def training_step(clean_sample_batch, noise_sample_batch, steps):
+    x_noisy, x_target = mix_and_permute_to_device(clean_sample_batch, noise_sample_batch)
+        
+    # fix codebook
+    generator_model.quantizer.codebook.eval() # TODO - consider if it should be put outside of this
+
+    # initialize generator loss
+    gen_loss = 0.0
+
+    # main genertor operation
+    y_nc, zq, z, vqloss, perplexity = generator_model(x_noisy)
+
+    # perplexity info
+    # self._perplexity(perplexity, mode=mode)
+
+    # vq loss
+    vqloss = torch.sum(vqloss)
+    vqloss *= config["lambda_vq_loss"]
+    gen_loss += vqloss
+
+    # metric loss
+    mel_loss = criterion["mel"](y_nc, x_target)
+    mel_loss *= config["lambda_mel_loss"]
+    gen_loss += mel_loss
+    
+    optimizer["generator"].zero_grad()
+    gen_loss.backward()
+
+    if config["generator_grad_norm"] > 0:
+        torch.nn.utils.clip_grad_norm_(
+            generator_model.parameters(),
+            config["generator_grad_norm"],
+        )
+    optimizer["generator"].step()
+    shceduler["generator"].step()
+
+    # Logging in ClearML
+    if(steps % 100 == 0):
+        print(steps)
+        y = y_nc[0].permute(1,0).squeeze().detach().numpy()
+        path = os.path.join('training_output','debug.wav')
+        sf.write(
+            path,
+            y,
+            sample_rate,
+            "PCM_16",
+        )
+        logger.report_media('audio', 'tada',iteration=steps,
+        local_path = path
+        )
+    return gen_loss
+
+
+def validation_step(clean_sample_batch, noise_sample_batch):
+    x_noisy, x_target = mix_and_permute_to_device(clean_sample_batch, noise_sample_batch)
+        
+    # fix codebook
+    generator_model.quantizer.codebook.eval() # TODO - consider if it should be put outside of this
+
+    # initialize generator loss
+    gen_loss = 0.0
+
+    # main genertor operation
+    y_nc, zq, z, vqloss, perplexity = generator_model(x_noisy)
+
+    # perplexity info
+    # self._perplexity(perplexity, mode=mode)
+
+    # vq loss
+    vqloss = torch.sum(vqloss)
+    vqloss *= config["lambda_vq_loss"]
+    gen_loss += vqloss
+
+    # metric loss
+    mel_loss = criterion["mel"](y_nc, x_target)
+    mel_loss *= config["lambda_mel_loss"]
+    gen_loss += mel_loss
+    return gen_loss
+
+def test():
+    pass
+
+
+
+
 steps = 0
-# Training loop #####################
-for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
-    for j_batch, noise_sample_batch in enumerate(iter(train_noise_dataloader)):
-        # Perform training on pseudo batch
-        x_mixed, y_clean = mix_clean_noise_batch(clean_sample_batch, noise_sample_batch)
-        x_mixed = x_mixed.permute(0,2,1).float()  # (B,C,T)
-        y_clean = y_clean.permute(0,2,1).float()  # (B,C,T)
+epochs = [i for i in range(4)]
+training_losses = []
+validation_losses = []
+# Maybe have an epoch here
+for epoch in epochs:
+    # Training loop #####################
+    for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
+        train_loss = 0
+        if i_batch == 3:
+            break
+        for j_batch, noise_sample_batch in enumerate(iter(train_noise_dataloader)):
+            train_loss += training_step(clean_sample_batch, noise_sample_batch, steps)
+            steps += 1
+        training_losses += train_loss
+    
+
+    # Validation loop ###################
+    for i_batch, clean_sample_batch in enumerate(iter(val_clean_dataloader)):
+        val_loss = 0
+        if i_batch == 3:
+            break
+        for j_batch, noise_sample_batch in enumerate(iter(val_noise_dataloader)):
+            with torch.no_grad():
+                val_loss += validation_step(clean_sample_batch, noise_sample_batch).item()
+        validation_losses += val_loss
+    
+
+plt.plot(range(len(training_losses)), training_losses, label='Training Loss')
+plt.plot(range(len(validation_losses)), validation_losses, label='Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
 
 
-        # Send input through model
-        x_noisy = x_mixed.to(device)
-        x_target = y_clean.to(device)
+testing_losses = []
+# Testing loop ###################
+for i_batch, clean_sample_batch in enumerate(iter(val_clean_dataloader)):
+    test_loss = 0
+    if i_batch == 3:
+        break
+    for j_batch, noise_sample_batch in enumerate(iter(val_noise_dataloader)):
+        with torch.no_grad():
+            test_loss += validation_step(clean_sample_batch, noise_sample_batch).item()
+    testing_losses += val_loss
+    
+plt.plot(testing_losses, label='Test Loss')
+plt.xlabel('Batch')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
 
-        # fix codebook
-        # print("Fix codebook")
-        generator_model.quantizer.codebook.eval()
 
-        # initialize generator loss
-        gen_loss = 0.0
-
-        # main genertor operation
-        # print("Main generator operation")
-        y_nc, zq, z, vqloss, perplexity = generator_model(x_noisy)
-
-        # perplexity info
-        # self._perplexity(perplexity, mode=mode)
-
-        # vq loss
-        # gen_loss += self._vq_loss(vqloss, mode=mode)
-        # print("VQ_loss")
-        vqloss = torch.sum(vqloss)
-        vqloss *= config["lambda_vq_loss"]
-        gen_loss += vqloss
-
-        # metric loss
-        # gen_loss += self._metric_loss(y_nc, x_c, mode=mode)
-
-        # print("Mel_loss")
-        # print(y_nc.shape)
-        # print(x_target.shape)
-        mel_loss = criterion["mel"](y_nc, x_target)
-        mel_loss *= config["lambda_mel_loss"]
-        # self._record_loss('mel_loss', mel_loss, mode=mode)
-        gen_loss += mel_loss
-
-        # update generator
-        # self._record_loss('generator_loss', gen_loss, mode=mode)
-        # self._update_generator(gen_loss)
-        # print("Optimizer")
-        optimizer["generator"].zero_grad()
-        gen_loss.backward()
-
-        if config["generator_grad_norm"] > 0:
-            torch.nn.utils.clip_grad_norm_(
-                generator_model.parameters(),
-                config["generator_grad_norm"],
-            )
-        optimizer["generator"].step()
-        shceduler["generator"].step()
-
-        # update counts
-        if(steps % 100 == 0):
-            print(steps)
-            y = y_nc[0].permute(1,0).squeeze().detach().numpy()
-            path = os.path.join('training_output','debug.wav')
-            sf.write(
-                path,
-                y,
-                sample_rate,
-                "PCM_16",
-            )
-            logger.report_media('audio', 'tada',iteration=steps,
-            local_path = path
-            )
-        steps += 1
