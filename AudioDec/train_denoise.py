@@ -231,7 +231,7 @@ test_clean_dataloader = DataLoader(clean_splits['test'], batch_size=2, shuffle=T
 test_noise_dataloader = DataLoader(noise_splits['test'], batch_size=2, shuffle=True, generator=generator)
 # Loading Trainer ###################
 
-def mix_and_permute_to_device():
+def mix_and_permute_to_device(clean_sample_batch, noise_sample_batch):
     # Perform training on pseudo batch
     x_mixed, y_clean = mix_clean_noise_batch(clean_sample_batch, noise_sample_batch)
     x_mixed = x_mixed.permute(0,2,1).float()  # (B,C,T)
@@ -295,6 +295,12 @@ def training_step(clean_sample_batch, noise_sample_batch, steps):
         logger.report_media('audio', 'tada',iteration=steps,
         local_path = path
         )
+        plt.plot(range(len(training_losses)), training_losses, label='Training Loss')
+        plt.plot(range(len(validation_losses)), validation_losses, label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.show()
     return gen_loss
 
 
@@ -331,7 +337,7 @@ def test():
 
 
 steps = 0
-epochs = [i for i in range(4)]
+epochs = [i for i in range(1)]
 training_losses = []
 validation_losses = []
 # Maybe have an epoch here
@@ -339,23 +345,23 @@ for epoch in epochs:
     # Training loop #####################
     for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
         train_loss = 0
-        if i_batch == 3:
-            break
+        # if i_batch == 3:
+        #     break
         for j_batch, noise_sample_batch in enumerate(iter(train_noise_dataloader)):
-            train_loss += training_step(clean_sample_batch, noise_sample_batch, steps)
+            train_loss += training_step(clean_sample_batch, noise_sample_batch, steps).item()
             steps += 1
-        training_losses += train_loss
+        training_losses.append(train_loss)
     
 
     # Validation loop ###################
     for i_batch, clean_sample_batch in enumerate(iter(val_clean_dataloader)):
         val_loss = 0
-        if i_batch == 3:
-            break
+        # if i_batch == 3:
+        #     break
         for j_batch, noise_sample_batch in enumerate(iter(val_noise_dataloader)):
             with torch.no_grad():
                 val_loss += validation_step(clean_sample_batch, noise_sample_batch).item()
-        validation_losses += val_loss
+        validation_losses.append(val_loss)
     
 
 plt.plot(range(len(training_losses)), training_losses, label='Training Loss')
@@ -368,14 +374,14 @@ plt.show()
 
 testing_losses = []
 # Testing loop ###################
-for i_batch, clean_sample_batch in enumerate(iter(val_clean_dataloader)):
+for i_batch, clean_sample_batch in enumerate(iter(test_clean_dataloader)):
     test_loss = 0
-    if i_batch == 3:
-        break
-    for j_batch, noise_sample_batch in enumerate(iter(val_noise_dataloader)):
+    # if i_batch == 3:
+    #     break
+    for j_batch, noise_sample_batch in enumerate(iter(test_noise_dataloader)):
         with torch.no_grad():
             test_loss += validation_step(clean_sample_batch, noise_sample_batch).item()
-    testing_losses += val_loss
+    testing_losses.append(val_loss)
     
 plt.plot(testing_losses, label='Test Loss')
 plt.xlabel('Batch')
