@@ -9,8 +9,8 @@ from dataloading.AudioDataset import AudioDataset
 from torch.utils.data import DataLoader, random_split
 import torch
 import math
+import random
 import os
-from os import walk
 
 from models.autoencoder.AudioDec import Generator as generator_audiodec
 import yaml
@@ -19,12 +19,18 @@ from losses import DiscriminatorAdversarialLoss
 from losses import FeatureMatchLoss
 from losses import GeneratorAdversarialLoss
 from losses import MultiMelSpectrogramLoss
-from clearml import Task
+from clearml import Task, Logger
 import soundfile as sf
 import matplotlib.pyplot as plt
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+parser.add_argument("-e", "--environment", default="LAPTOP")
+
+args = parser.parse_args()
 
 
-ENVIRONMENT = "LAPTOP"
+ENVIRONMENT = args.environment
 # ENVIRONMENT = "HPC"
 
 if ENVIRONMENT == "LAPTOP":
@@ -34,13 +40,16 @@ if ENVIRONMENT == "LAPTOP":
     NOISE_ROOT = "noise"
     task = Task.init("dl-speech-enhancement", "Laptop")
     logger = task.get_logger()
+    torch.set_num_threads(4)
 elif ENVIRONMENT == "HPC":
-    task = Task.init("dl-speech-enhancement", "HPC")
+    task = Task.init("dl-speech-enhancement", "HPC-AudioDec")
     logger = task.get_logger()
     CLEAN_PATH = "/work3/s164396/data/DNS-Challenge-4/datasets_fullband/clean_fullband/vctk_wav48_silence_trimmed"
     CLEAN_ROOT = "vctk_wav48_silence_trimmed"
     NOISE_PATH = "/work3/s164396/data/DNS-Challenge-4/datasets_fullband/noise_fullband"
     NOISE_ROOT = "noise_fullband"
+else:
+    raise Exception("Illegal argument: " + ENVIRONMENT)
 
 
 def add_noise(speech, noise, snr):
@@ -155,52 +164,16 @@ def define_criterion(config, device):
 number_of_intervals = 2
 length_of_interval = 48_000  # Number of samples in the audio file ! SHOULD BE DIVISIBLE WITH HOP_SIZE in config file
 
-
-def mix_clean_noise(clean_sample, noise_sample):
-    y_samples = torch.tensor([])
-    x_samples = torch.tensor([])
-    # for i in range(number_of_intervals):
-    #     rand_clean_start = torch.randint(
-    #         0, len(clean_sample) - length_of_interval, (1,)
-    #     ).item()
-    #     rand_noise_start = torch.randint(
-    #         0, len(noise_sample) - length_of_interval, (1,)
-    #     ).item()
-    #
-    #     clean_snippet = clean_sample[
-    #         rand_clean_start : rand_clean_start + length_of_interval
-    #     ]
-    #     noise_snippet = noise_sample[
-    #         rand_noise_start : rand_noise_start + length_of_interval
-    #     ]
-    #
-    #     mixed_snippet = add_noise(
-    #         clean_snippet, noise_snippet, 10
-    #     )  # TODO - add random SNR
-    #     if i == 0:
-    #         y_samples = clean_snippet
-    #         x_samples = mixed_snippet
-    #         continue
-    #     y_samples = torch.stack((y_samples, clean_snippet))
-    #     x_samples = torch.stack((x_samples, mixed_snippet))
-
-    return x_samples, y_samples
-
-
-def mix_clean_noise_batch(clean_batch, noise_batch):
-    y_batch = torch.tensor([])
-    x_batch = torch.tensor([])
-    for clean_sample in clean_batch:
-        for noise_sample in noise_batch:
-            x, y = mix_clean_noise(clean_sample, noise_sample)  # Maybe flatten
-            x_batch = torch.cat((x_batch, x))
-            y_batch = torch.cat((y_batch, y))
-    return x_batch, y_batch
-
-
 # Seeds for reproducibility #########
 generator_seed = 81
-generator = torch.Generator().manual_seed(generator_seed)
+random_generator = torch.manual_seed(generator_seed)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
 
 # device assignment
 if ENVIRONMENT == "LAPTOP":
@@ -213,15 +186,63 @@ else:
 device = torch.device(tx_device)
 
 # Loading model #####################
-# TODO - Load model
 model = "vctk_denoise"
 path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
+
 config = load_config(path_to_config)
 generator_model = generator_audiodec(**config["generator_params"])
 generator_model.to(device=tx_device)
-optimizer, shceduler = define_optimizer_scheduler(generator_model, config)
+optimizer, scheduler = define_optimizer_scheduler(generator_model, config)
 criterion = define_criterion(config, device)
-# optimizer = torch.optim.Adam(**config["generator_optim_params"])
+
+model_sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(model)
+
+state_dict = torch.load(encoder_checkpoint, map_location="cpu")
+generator_model.load_state_dict(state_dict["model"]["generator"])
+
+
+# EVAL
+def reconstruct_test(model):
+    clean_file_path = "corpus/test/book_00002_chp_0005_reader_11980_3_seg_0.wav"
+    noise_file_path = "corpus/train/noise/_1eSheWjfJQ.wav"
+    pred_output_path = f"job_out/book_00002_chp_0005_reader_11980_3_seg_0___{model}___reconstructed.wav"
+    mixed_output_path = (
+        f"job_out/book_00002_chp_0005_reader_11980_3_seg_0___{model}___mixed.wav"
+    )
+    clean_audio = np.array(sf.read(clean_file_path)[0])
+    noise_audio = np.array(sf.read(noise_file_path)[0])
+
+    if len(clean_audio) > len(noise_audio):
+        clean_audio = clean_audio[: len(noise_audio)]
+    else:
+        noise_audio = noise_audio[: len(clean_audio)]
+
+    audio = add_noise(torch.tensor(clean_audio), torch.tensor(noise_audio), 10)
+    audio = audio.numpy()
+
+    sf.write(
+        mixed_output_path,
+        audio,
+        48000,
+        "PCM_16",
+    )
+
+    audio = np.expand_dims(audio, axis=0)  # (T, C) -> (C, 1, T)
+    audio = np.expand_dims(audio, axis=0)  # (T, C) -> (C, 1, T)
+    with torch.no_grad():
+        audio = torch.tensor(audio, dtype=torch.float).to(device)
+        y = generator_model(audio)[0].squeeze(1).transpose(1, 0).cpu().numpy()
+        sf.write(
+            pred_output_path,
+            y,
+            48000,
+            "PCM_16",
+        )
+
+
+if ENVIRONMENT == "LAPTOP":
+    reconstruct_test("generator")
+
 
 # Freeze components
 # fix quantizer
@@ -231,99 +252,59 @@ for parameter in generator_model.quantizer.parameters():
 for parameter in generator_model.decoder.parameters():
     parameter.requires_grad = False
 
-torch.set_num_threads(1)
-model_sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(model)
-
-print("AudioDec initinalizing!")
-audiodec = AudioDec(tx_device=tx_device, rx_device=rx_device)
-audiodec.load_transmitter(encoder_checkpoint)
-audiodec.load_receiver(encoder_checkpoint, decoder_checkpoint)
-
 # Loading data ######################
 sample_rate = 48000
-assert sample_rate == model_sample_rate, "The model's sample rate is not 48000Hz."
 batch_length = 96_000
 snr = [20, 10, 3]
 clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, batch_length, sample_rate)
 noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, batch_length, sample_rate)
 
-clean_splits = define_splits(clean_dataset, generator)
-noise_splits = define_splits(noise_dataset, generator)
-
+clean_splits = define_splits(clean_dataset, random_generator)
+noise_splits = define_splits(noise_dataset, random_generator)
 
 collator = CollaterAudio(batch_length)
 
-batch_size = 32
-batch_size_noise = 16
+batch_size = 16
+batch_size_noise = 8
 train_clean_dataloader = DataLoader(
     clean_splits["train"],
     batch_size=batch_size,
     shuffle=True,
-    generator=generator,
+    generator=random_generator,
     collate_fn=collator,
+    worker_init_fn=seed_worker,
 )
 train_noise_dataloader = DataLoader(
     noise_splits["train"],
     batch_size=batch_size_noise,
     shuffle=True,
-    generator=generator,
+    generator=random_generator,
     collate_fn=collator,
+    worker_init_fn=seed_worker,
 )
 
 val_clean_dataloader = DataLoader(
     clean_splits["validation"],
     batch_size=batch_size,
     shuffle=True,
-    generator=generator,
+    generator=random_generator,
     collate_fn=collator,
+    worker_init_fn=seed_worker,
 )
 val_noise_dataloader = DataLoader(
     noise_splits["validation"],
     batch_size=batch_size_noise,
     shuffle=True,
-    generator=generator,
+    generator=random_generator,
     collate_fn=collator,
+    worker_init_fn=seed_worker,
 )
 
-# test_clean_dataloader = DataLoader(
-#     clean_splits["test"],
-#     batch_size=2,
-#     shuffle=True,
-#     generator=generator,
-#     collate_fn=collator,
-# )
-# test_noise_dataloader = DataLoader(
-#     noise_splits["test"],
-#     batch_size=2,
-#     shuffle=True,
-#     generator=generator,
-#     collate_fn=collator,
-# )
 # Loading Trainer ###################
 
 
-def mix_and_permute_to_device(clean_sample_batch, noise_sample_batch):
-    # Perform training on pseudo batch
-    x_mixed, y_clean = mix_clean_noise_batch(clean_sample_batch, noise_sample_batch)
-    x_mixed = x_mixed.permute(0, 2, 1).float()  # (B,C,T)
-    y_clean = y_clean.permute(0, 2, 1).float()  # (B,C,T)
-
-    # Send input through model
-    x_noisy = x_mixed.to(device)
-    x_target = y_clean.to(device)
-    return x_noisy, x_target
-
-
 def log_audio_clearml(steps):
-    # y = y[0].permute(1, 0).cpu().squeeze().detach().numpy()
-    # path = os.path.join("training_output", "debug.wav")
-    # sf.write(
-    #     path,
-    #     y,
-    #     sample_rate,
-    #     "PCM_16",
-    # )
-    # logger.report_media("audio", "tada", iteration=steps, local_path=path)
+    # TODO - Report scalar would maybe speed this process up
     plt.plot(range(len(training_losses)), training_losses, label="Training Loss")
     plt.plot(range(len(validation_losses)), validation_losses, label="Validation Loss")
     plt.xlabel("Batch")
@@ -332,15 +313,11 @@ def log_audio_clearml(steps):
     plt.show()
 
 
-def training_step(clean_sample_batch, mixed_sample_batch, steps):
-    # x_noisy, x_target = mix_and_permute_to_device(
-    #     clean_sample_batch, noise_sample_batch
-    # )
-
+def training_step(clean_sample_batch, mixed_sample_batch):
     mixed_sample_batch = mixed_sample_batch.to(device)
     clean_sample_batch = clean_sample_batch.to(device)
     # fix codebook
-    generator_model.quantizer.codebook.eval()  # TODO - consider if it should be put outside of this
+    generator_model.quantizer.codebook.eval()
 
     # initialize generator loss
     gen_loss = 0.0
@@ -370,20 +347,16 @@ def training_step(clean_sample_batch, mixed_sample_batch, steps):
             config["generator_grad_norm"],
         )
     optimizer["generator"].step()
-    shceduler["generator"].step()
+    scheduler["generator"].step()
 
     return gen_loss
 
 
 def validation_step(clean_sample_batch, mixed_sample_batch):
-    # x_noisy, x_target = mix_and_permute_to_device(
-    #     clean_sample_batch, noise_sample_batch
-    # )
-
     mixed_sample_batch = mixed_sample_batch.to(device)
     clean_sample_batch = clean_sample_batch.to(device)
     # fix codebook
-    generator_model.quantizer.codebook.eval()  # TODO - consider if it should be put outside of this
+    generator_model.quantizer.codebook.eval()
 
     # initialize generator loss
     gen_loss = 0.0
@@ -409,20 +382,49 @@ def validation_step(clean_sample_batch, mixed_sample_batch):
 def test():
     pass
 
+
 start_time = time.perf_counter()
 steps = 0
-epochs = [i for i in range(3)]
+epochs = [i for i in range(5)]
 training_losses = []
 validation_losses = []
 train_noise_iter = iter(train_noise_dataloader)
 train_noise_sample_batch = next(train_noise_iter)
 val_noise_iter = iter(val_noise_dataloader)
 val_noise_sample_batch = next(val_noise_iter)
+
+
+def load_next_noise(noise_iterator, dataset_name):
+    try:
+        next_noise_batch = next(noise_iterator)
+    except:
+        noise_dataloader = DataLoader(
+            noise_splits[dataset_name],
+            batch_size=batch_size_noise,
+            shuffle=True,
+            generator=random_generator,
+            worker_init_fn=seed_worker,
+            collate_fn=collator,
+        )
+
+        noise_iterator = iter(noise_dataloader)
+        next_noise_batch = next(noise_iterator)
+
+    return next_noise_batch, noise_iterator
+
+
 # Maybe have an epoch here
+steps = 0
+train_acc_batch_size = 0
+train_steps = 0
+
+print("Start training")
+
 for epoch in epochs:
     # Training loop #####################
     i_batch = 0
     train_loss = 0
+    train_losses = []
     for i_batch, clean_sample_batch in enumerate(iter(train_clean_dataloader)):
         # Sample random noise
 
@@ -431,85 +433,88 @@ for epoch in epochs:
         )
         noise_samples = train_noise_sample_batch[rand_indices]
 
+        # clean_sample_batch.to(device)
+        # noise_samples.to(device)
+
         # Mix noise
         mixed_samples = add_noise(clean_sample_batch, noise_samples, 10)
 
-        if i_batch == 3:
+        if ENVIRONMENT == "LAPTOP" and i_batch == 3:
             break
-        train_loss += training_step(clean_sample_batch, mixed_samples, steps).item()
+        loss = training_step(clean_sample_batch, mixed_samples).item()
+        train_loss += loss
+        train_losses.append(loss)
         steps += 1
-
+        train_steps += 1
 
         if steps % 100 == 0:
             current_time = time.perf_counter()
             time_dif = current_time - start_time
-            seconds, minutes, hours = int(time_dif % 60), int(time_dif // 60), int(time_dif // 3600)
-            print(f"Training: Step {steps} \t Time: {hours}:{minutes}:{seconds}")
-            # print(steps)
-        # Logging in ClearML
-        # if steps % 10 == 0:
-        #     # print(steps)
-        #     log_audio_clearml(steps)
+            seconds, minutes, hours = (
+                int(time_dif % 60),
+                int(time_dif // 60),
+                int(time_dif // 3600),
+            )
+            print(f"Training: Step {train_steps} \t Time: {hours}:{minutes}:{seconds}")
+            # TODO - Report scalar
+            if ENVIRONMENT == "HPC":
+                for loss_ in training_losses:
+                    logger.report_scalar(
+                        "Train-loss", "Train", loss_, iteration=train_steps
+                    )
+                training_losses = []
 
         if 4 < torch.randint(0, 100, (1,)).item():
-            try:
-                train_noise_sample_batch = next(train_noise_iter)
-            except:
-                train_noise_dataloader = DataLoader(
-                    noise_splits["train"],
-                    batch_size=batch_size_noise,
-                    shuffle=True,
-                    generator=generator,
-                    collate_fn=collator,
-                )
+            next_noise_batch, train_noise_iter = load_next_noise(
+                train_noise_iter, "train"
+            )
 
-                train_noise_iter = iter(train_noise_dataloader)
-                train_noise_sample_batch = next(train_noise_iter)
-
-    training_losses.append(train_loss / i_batch)
+    training_losses.append(train_loss / (i_batch + 1))
+    # Do a checkpoint
+    check_point_path = os.path.join(
+        "exp", "denoise", "from_pretrained", f"checkpoint-{train_steps}.pkl"
+    )
+    torch.save(generator_model.state_dict(), check_point_path)
+    reconstruct_test(f"AudioDec-{train_steps}")
 
     # Validation loop ###################
     val_loss = 0
     i_batch = 0
     for i_batch, clean_sample_batch in enumerate(iter(val_clean_dataloader)):
-        if i_batch == 3:
+        if ENVIRONMENT == "LAPTOP" and i_batch == 3:
             break
         rand_indices = torch.randint(
             0, len(val_noise_sample_batch), (len(clean_sample_batch),)
         )
         noise_samples = val_noise_sample_batch[rand_indices]
 
+        clean_sample_batch.to(device)
+        noise_samples.to(device)
         # Mix noise
         mixed_samples = add_noise(clean_sample_batch, noise_samples, 10)
 
         with torch.no_grad():
             val_loss += validation_step(clean_sample_batch, mixed_samples).item()
 
-
         if steps % 100 == 0:
             current_time = time.perf_counter()
             time_dif = current_time - start_time
-            seconds, minutes, hours = int(time_dif % 60), int(time_dif // 60), int(time_dif // 3600)
+            seconds, minutes, hours = (
+                int(time_dif % 60),
+                int(time_dif // 60),
+                int(time_dif // 3600),
+            )
             print(f"Validation: Step {steps} \t Time: {hours}:{minutes}:{seconds}")
         steps += 1
 
         # TODO - Should this be different from training
-        if 10 < torch.randint(0, 100, (1,)).item():
-            try:
-                val_noise_sample_batch = next(val_noise_iter)
-            except:
-                val_noise_dataloader = val_noise_dataloader = DataLoader(
-                    noise_splits["validation"],
-                    batch_size=batch_size_noise,
-                    shuffle=True,
-                    generator=generator,
-                    collate_fn=collator,
-                )
-                val_noise_iter = iter(val_noise_dataloader)
-                val_noise_sample_batch = next(val_noise_iter)
-    validation_losses.append(val_loss / i_batch)
-    log_audio_clearml(steps)
+        if 4 < torch.randint(0, 100, (1,)).item():
+            next_noise_batch, val_noise_iter = load_next_noise(
+                val_noise_iter, "validation"
+            )
 
+    validation_losses.append(val_loss / (i_batch + 1))
+    log_audio_clearml(steps)
 
 plt.plot(range(len(training_losses)), training_losses, label="Training Loss")
 plt.plot(range(len(validation_losses)), validation_losses, label="Validation Loss")
@@ -517,7 +522,6 @@ plt.xlabel("Epoch")
 plt.ylabel("Loss")
 plt.legend()
 plt.show()
-
 
 # testing_losses = []
 # # Testing loop ###################
