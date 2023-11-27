@@ -452,7 +452,7 @@ for epoch in epochs:
             time_dif = current_time - start_time
             seconds, minutes, hours = (
                 int(time_dif % 60),
-                int(time_dif // 60),
+                int((time_dif // 60) % 60),
                 int(time_dif // 3600),
             )
             print(f"Training: Step {train_steps} \t Time: {hours}:{minutes}:{seconds}")
@@ -501,7 +501,7 @@ for epoch in epochs:
             time_dif = current_time - start_time
             seconds, minutes, hours = (
                 int(time_dif % 60),
-                int(time_dif // 60),
+                int((time_dif // 60) % 60),
                 int(time_dif // 3600),
             )
             print(f"Validation: Step {steps} \t Time: {hours}:{minutes}:{seconds}")
