@@ -9,7 +9,12 @@ from dataloader import CollaterAudio
 from utils.audiodec import AudioDec, assign_model
 from dataloading.AudioDataset import AudioDataset
 from torch.utils.data import DataLoader, random_split
-from torchmetrics.audio import SignalNoiseRatio
+from torchmetrics.audio import \
+    (SignalNoiseRatio,
+     # SignalDistortionRatio,
+     ScaleInvariantSignalDistortionRatio,
+     # ShortTimeObjectiveIntelligibility
+     )
 import torch
 import math
 import random
@@ -139,14 +144,22 @@ decoder.to(device=tx_device)
 mae = nn.L1Loss().to(device)
 mse = nn.MSELoss().to(device)
 snr = SignalNoiseRatio().to(device)
-
+measures = {
+    # 'MAE': nn.L1Loss().to(device),
+    # 'MSE': nn.MSELoss().to(device),
+    # 'SNR': SignalNoiseRatio().to(device),
+    # 'SDR': SignalDistortionRatio().to(device),
+    'SI-SDR': ScaleInvariantSignalDistortionRatio().to(device),
+    # 'PESQ': PerceptualEvaluationSpeechQuality(fs=16000, mode='wb'),
+    # 'STOI': ShortTimeObjectiveIntelligibility(48000),
+}
 
 def calculate_train_loss(pred, target):
-    return mse(pred, target)
+    return -measures['SI-SDR'](pred, target)
 
 
 def calculate_validation_loss(pred, target):
-    return mse(pred, target)
+    return -measures['SI-SDR'](pred, target)
 
 
 # Freeze components
@@ -173,8 +186,8 @@ if ENVIRONMENT == 'LAPTOP':
     batch_size = 8
     batch_size_noise = 8
 else:
-    batch_size = 16
-    batch_size_noise = 16
+    batch_size = 8
+    batch_size_noise = 8
 
 
 def seed_worker(worker_id):
@@ -256,7 +269,7 @@ epochs = [i for i in range(10)]
 steps = 0
 train_acc_batch_size = 0
 train_steps = 0
-record_audio_snippets = True
+record_audio_snippets = False
 
 print("Start training")
 
@@ -322,7 +335,7 @@ for epoch in epochs:
     avg_training_loss = np.mean(train_losses)
     # Do a checkpoint
     check_point_path = os.path.join(
-        "exp", "denoise", "fresh", f"checkpoint-{train_steps}.pkl"
+        "exp", "denoise", "fresh","si-sdr", f"checkpoint-{train_steps}.pkl"
     )
     torch.save(generator_model.state_dict(), check_point_path)
 
