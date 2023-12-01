@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import torch
 import torchaudio
+from torch.nn.modules.loss import _Loss
 from torchaudio import transforms
 from torch import nn, functional
 from torchmetrics.audio import SignalNoiseRatio, ScaleInvariantSignalDistortionRatio, SignalDistortionRatio, \
@@ -16,8 +17,8 @@ print(sf.__version__)
 print(sf.__libsndfile_version__)
 
 path_clean = os.path.join('corpus', 'test', 'book_00002_chp_0005_reader_11980_3_seg_0.wav')
-path_mixed = 'job_out/book_00002_chp_0005_reader_11980_3_seg_0___22328___mixed.wav'
-path_pred = 'job_out/book_00002_chp_0005_reader_11980_3_seg_0___22328___reconstructed.wav'
+path_mixed = 'job_out/book_00002_chp_0005_reader_11980_3_seg_0___5583___mixed.wav'
+path_pred = 'job_out/book_00002_chp_0005_reader_11980_3_seg_0___5583___reconstructed.wav'
 
 names = ['clean', 'mixed', 'reconstruction']
 paths = [
@@ -35,15 +36,26 @@ def plot_specgram(waveforms, sample_rate, title, xlim=None):
     plt.show(block=False)
 
 
+mel_spectrogram = transforms.MelSpectrogram(48000)
+mae = nn.L1Loss()
+def Mel_L1(pred, target):
+    pred_mel = mel_spectrogram(pred)
+    target_mel = mel_spectrogram(target)
+
+    return mae(pred_mel,target_mel)
+
+
 def print_measures(waveform1, waveform2):
     measures = {
         'MAE': nn.L1Loss(),
         'MSE': nn.MSELoss(),
         'SNR': SignalNoiseRatio(),
         'SDR': SignalDistortionRatio(),
-        'SI-SDR': ScaleInvariantSignalDistortionRatio(),
+        'SI-SDR(True)': ScaleInvariantSignalDistortionRatio(zero_mean=True),
+        'SI-SDR(False)': ScaleInvariantSignalDistortionRatio(zero_mean=False),
         'PESQ': PerceptualEvaluationSpeechQuality(fs=16000, mode='wb'),
         'STOI': ShortTimeObjectiveIntelligibility(48000),
+        'Mel-L1': Mel_L1,
     }
     for measure_name, measure in measures.items():
         if measure_name == 'PESQ':

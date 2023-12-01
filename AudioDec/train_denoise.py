@@ -4,6 +4,7 @@ import time
 import numpy as np
 from torch import nn
 from torch.optim import Adam
+from torchaudio import transforms
 
 from dataloader import CollaterAudio
 from utils.audiodec import AudioDec, assign_model
@@ -11,9 +12,9 @@ from dataloading.AudioDataset import AudioDataset
 from torch.utils.data import DataLoader, random_split
 from torchmetrics.audio import \
     (SignalNoiseRatio,
-     # SignalDistortionRatio,
+    # SignalDistortionRatio,
      ScaleInvariantSignalDistortionRatio,
-     # ShortTimeObjectiveIntelligibility
+    # ShortTimeObjectiveIntelligibility
      )
 import torch
 import math
@@ -43,7 +44,7 @@ if ENVIRONMENT == "LAPTOP":
     logger = task.get_logger()
     torch.set_num_threads(4)
 elif ENVIRONMENT == "HPC":
-    task = Task.init("dl-speech-enhancement", "HPC-AudioDec-Fresh")
+    task = Task.init("dl-speech-enhancement", "HPC-AudioDec-Fresh-Mel_L1-DefaultAdam")
     logger = task.get_logger()
     CLEAN_PATH = "/work3/s164396/data/DNS-Challenge-4/datasets_fullband/clean_fullband/vctk_wav48_silence_trimmed"
     CLEAN_ROOT = "vctk_wav48_silence_trimmed"
@@ -125,7 +126,7 @@ generator_model = generator_audiodec(**config["generator_params"])
 #     lr: 1.0e-4
 #     betas: [0.5, 0.9]
 #     weight_decay: 0.0
-optimizer = Adam(generator_model.parameters(), lr=1.0e-4, betas=(0.5, 0.9), weight_decay=0)
+optimizer = Adam(generator_model.parameters())
 
 
 # model_sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(model)
@@ -144,6 +145,16 @@ decoder.to(device=tx_device)
 mae = nn.L1Loss().to(device)
 mse = nn.MSELoss().to(device)
 snr = SignalNoiseRatio().to(device)
+mel_spectrogram = transforms.MelSpectrogram(48000).to(device)
+
+
+def Mel_L1(pred, target):
+    pred_mel = mel_spectrogram(pred)
+    target_mel = mel_spectrogram(target)
+
+    return mae(pred_mel, target_mel)
+
+
 measures = {
     # 'MAE': nn.L1Loss().to(device),
     # 'MSE': nn.MSELoss().to(device),
@@ -152,14 +163,16 @@ measures = {
     'SI-SDR': ScaleInvariantSignalDistortionRatio().to(device),
     # 'PESQ': PerceptualEvaluationSpeechQuality(fs=16000, mode='wb'),
     # 'STOI': ShortTimeObjectiveIntelligibility(48000),
+    'Mel-L1': Mel_L1
 }
 
+
 def calculate_train_loss(pred, target):
-    return -measures['SI-SDR'](pred, target)
+    return measures['Mel-L1'](pred, target)
 
 
 def calculate_validation_loss(pred, target):
-    return -measures['SI-SDR'](pred, target)
+    return measures['Mel-L1'](pred, target)
 
 
 # Freeze components
@@ -173,7 +186,7 @@ def freeze_decoder(model):
 
 # Loading data ######################
 sample_rate = 48000
-batch_length = 144_000
+batch_length = 96_000
 clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, batch_length, sample_rate)
 noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, batch_length, sample_rate)
 
@@ -335,7 +348,7 @@ for epoch in epochs:
     avg_training_loss = np.mean(train_losses)
     # Do a checkpoint
     check_point_path = os.path.join(
-        "exp", "denoise", "fresh","si-sdr", f"checkpoint-{train_steps}.pkl"
+        "exp", "denoise", "fresh", "si-sdr", f"checkpoint-{train_steps}.pkl"
     )
     torch.save(generator_model.state_dict(), check_point_path)
 
