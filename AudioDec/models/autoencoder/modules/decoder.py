@@ -114,7 +114,9 @@ class Decoder(torch.nn.Module):
         self.conv2 = Conv1d(out_channels, output_channels, kernel_size, 1, bias=False)
 
     def forward(self, z):
-        x = self.conv1(z)
+        # Exclude this conv from code_dim to encoder output size
+        # x = self.conv1(z)
+        x = z
         for i in range(self.num_blocks):
             x = self.conv_blocks[i](x)
         x = self.conv2(x)
