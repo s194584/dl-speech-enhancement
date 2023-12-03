@@ -17,8 +17,9 @@ print(sf.__version__)
 print(sf.__libsndfile_version__)
 
 path_clean = os.path.join('corpus', 'test', 'book_00002_chp_0005_reader_11980_3_seg_0.wav')
-path_mixed = 'job_out/book_00002_chp_0005_reader_11980_3_seg_0___5583___mixed.wav'
-path_pred = 'job_out/book_00002_chp_0005_reader_11980_3_seg_0___5583___reconstructed.wav'
+checkpoint=111661
+path_mixed = f'job_out/MelL1_Adam-adjusted___{checkpoint}___mixed.wav'
+path_pred = f'job_out/MelL1_Adam-adjusted___{checkpoint}___reconstructed.wav'
 
 names = ['clean', 'mixed', 'reconstruction']
 paths = [

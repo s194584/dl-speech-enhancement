@@ -126,17 +126,18 @@ generator_model = generator_audiodec(**config["generator_params"])
 #     lr: 1.0e-4
 #     betas: [0.5, 0.9]
 #     weight_decay: 0.0
-optimizer = Adam(generator_model.parameters())
+optimizer = Adam(generator_model.parameters(),lr=5e-5)
 
 
 # model_sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(model)
 # TODOO - Create own config file since we don't use theirs as much anymore
 def load_from_pretrained(checkpoint):
     state_dict = torch.load(checkpoint, map_location="cpu")
-    generator_model.load_state_dict(state_dict["model"]["generator"])
+    # generator_model.load_state_dict(state_dict["model"]["generator"])
+    generator_model.load_state_dict(state_dict)
 
-
-# load_from_pretrained(encoder_checkpoint)
+encoder_checkpoint = os.path.join("exp","denoise","MelL1_Adam-adjusted_checkpoint-27915.pkl")
+load_from_pretrained(encoder_checkpoint)
 encoder = generator_model.encoder
 encoder.to(device=tx_device)
 decoder = generator_model.decoder
@@ -145,7 +146,13 @@ decoder.to(device=tx_device)
 mae = nn.L1Loss().to(device)
 mse = nn.MSELoss().to(device)
 snr = SignalNoiseRatio().to(device)
-mel_spectrogram = transforms.MelSpectrogram(48000).to(device)
+mel_spectrogram = transforms.MelSpectrogram(
+    sample_rate=48000,
+    n_mels=80,
+    f_max=24000,
+    n_fft=2048,
+    hop_length=300,
+).to(device)
 
 
 def Mel_L1(pred, target):
@@ -156,11 +163,11 @@ def Mel_L1(pred, target):
 
 
 measures = {
-    # 'MAE': nn.L1Loss().to(device),
+    'MAE': nn.L1Loss().to(device),
     # 'MSE': nn.MSELoss().to(device),
     # 'SNR': SignalNoiseRatio().to(device),
     # 'SDR': SignalDistortionRatio().to(device),
-    'SI-SDR': ScaleInvariantSignalDistortionRatio().to(device),
+    # 'SI-SDR': ScaleInvariantSignalDistortionRatio().to(device),
     # 'PESQ': PerceptualEvaluationSpeechQuality(fs=16000, mode='wb'),
     # 'STOI': ShortTimeObjectiveIntelligibility(48000),
     'Mel-L1': Mel_L1
@@ -168,11 +175,11 @@ measures = {
 
 
 def calculate_train_loss(pred, target):
-    return measures['Mel-L1'](pred, target)
+    return 45.0*measures['Mel-L1'](pred, target)+30.0*measures['MAE'](pred, target)
 
 
 def calculate_validation_loss(pred, target):
-    return measures['Mel-L1'](pred, target)
+    return 45.0*measures['Mel-L1'](pred, target)+30.0*measures['MAE'](pred, target)
 
 
 # Freeze components
@@ -277,9 +284,9 @@ def validation_step(clean_sample_batch, mixed_sample_batch):
 
 start_time = time.perf_counter()
 steps = 0
-epochs = [i for i in range(10)]
+epochs = [i for i in range(500)]
 # Maybe have an epoch here
-steps = 0
+steps = 27916
 train_acc_batch_size = 0
 train_steps = 0
 record_audio_snippets = False

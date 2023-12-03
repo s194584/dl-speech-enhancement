@@ -104,12 +104,12 @@ def evaluate(estimate, reference):
     print(f"STOI score: {stoi_mix}")
 
 ##########################################################################
-def reconstruct_test(model, device, checkpoint):
+def reconstruct_test(model, device, checkpoint,tag):
     clean_file_path = "corpus/test/book_00002_chp_0005_reader_11980_3_seg_0.wav"
     noise_file_path = "corpus/train/noise_single/__HpItICRe0.wav"
-    pred_output_path = f"job_out/book_00002_chp_0005_reader_11980_3_seg_0___{checkpoint}___reconstructed.wav"
+    pred_output_path = f"job_out/{tag}___{checkpoint}___reconstructed.wav"
     mixed_output_path = (
-        f"job_out/book_00002_chp_0005_reader_11980_3_seg_0___{checkpoint}___mixed.wav"
+        f"job_out/{tag}___{checkpoint}___mixed.wav"
     )
     clean_audio = np.array(sf.read(clean_file_path)[0])
     noise_audio = np.array(sf.read(noise_file_path)[0])
@@ -154,9 +154,10 @@ path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml
 config = load_config(path_to_config)
 generator_model = generator_audiodec(**config["generator_params"])
 
-checkpoint = 22328
+tag = "MelL1_Adam-adjusted"
+checkpoint = 111661
+model_checkpoint = os.path.join("exp", "denoise", f"MelL1_Adam-adjusted_checkpoint-{checkpoint}.pkl")
 
-model_checkpoint = os.path.join("exp", "denoise", "fresh", f"checkpoint-{checkpoint}.pkl")
 
 state_dict = torch.load(model_checkpoint, map_location="cpu")
 generator_model.load_state_dict(state_dict)
@@ -165,4 +166,4 @@ encoder.to(device=device)
 decoder = generator_model.decoder
 decoder.to(device=device)
 
-reconstruct_test(generator_model, "cpu", checkpoint)
+reconstruct_test(generator_model, "cpu", checkpoint, tag)
