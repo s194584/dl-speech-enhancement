@@ -11,8 +11,6 @@ from torchmetrics.audio import SignalNoiseRatio, ScaleInvariantSignalDistortionR
     ShortTimeObjectiveIntelligibility
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 
-# TODO - TorchAudio
-
 print(sf.__version__)
 print(sf.__libsndfile_version__)
 
