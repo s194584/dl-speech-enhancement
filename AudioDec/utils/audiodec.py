@@ -38,7 +38,8 @@ class AudioDec(AudioCodec):
         else:
             raise NotImplementedError(f"Encoder type {config['model_type']} is not supported!")
         encoder = encoder(**config['generator_params'])
-        encoder.load_state_dict(torch.load(checkpoint, map_location='cpu')['model']['generator'])
+        # encoder.load_state_dict(torch.load(checkpoint, map_location='cpu')['model']['generator'])
+        encoder.load_state_dict(torch.load(checkpoint, map_location='cpu'))
         return encoder
 
 
@@ -53,7 +54,8 @@ class AudioDec(AudioCodec):
         else:
             raise NotImplementedError(f"Decoder {config['model_type']} is not supported!")
         decoder = decoder(**config['generator_params'])
-        decoder.load_state_dict(torch.load(checkpoint, map_location='cpu')['model']['generator'])
+        # decoder.load_state_dict(torch.load(checkpoint, map_location='cpu')['model']['generator'])
+        decoder.load_state_dict(torch.load(checkpoint, map_location='cpu'))
         return decoder
 
 
@@ -95,11 +97,11 @@ class AudioDecStreamer(AudioCodecStreamer):
 
     def _encode(self, x):
         x = self.tx_encoder.encode(x)
-        return self.tx_encoder.quantize(x)
+        return x #self.tx_encoder.quantize(x)
 
 
     def _decode(self, x):
-        x = self.rx_encoder.lookup(x)
+        # x = self.rx_encoder.lookup(x)
         return self.decoder.decode(x)
     
 

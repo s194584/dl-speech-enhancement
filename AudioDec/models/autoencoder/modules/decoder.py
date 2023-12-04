@@ -115,8 +115,8 @@ class Decoder(torch.nn.Module):
 
     def forward(self, z):
         # Exclude this conv from code_dim to encoder output size
-        # x = self.conv1(z)
-        x = z
+        x = self.conv1(z)
+        x = x
         for i in range(self.num_blocks):
             x = self.conv_blocks[i](x)
         x = self.conv2(x)
@@ -124,7 +124,8 @@ class Decoder(torch.nn.Module):
     
     def decode(self, z):
         check_mode(self.mode, inspect.stack()[0][3])
-        x = self.conv1.inference(z)
+        # x = self.conv1.inference(z)
+        x=z
         for i in range(self.num_blocks):
             x = self.conv_blocks[i].inference(x)
         x = self.conv2.inference(x)

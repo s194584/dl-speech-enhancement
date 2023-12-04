@@ -64,16 +64,16 @@ class AudioCodec(abc.ABC):
 
     def load_receiver(self, encoder_checkpoint, decoder_checkpoint):
         # load receiver model(s)
-        assert os.path.exists(encoder_checkpoint), f'{encoder_checkpoint} does not exist!'
-        self.rx_encoder = self._load_encoder(encoder_checkpoint)
-        self.rx_encoder.eval().to(self.rx_device)
-        zq = self.rx_encoder.initial_encoder(self.receptive_length, self.rx_device)
-        print("Load rx_encoder: %s" % (encoder_checkpoint))
+        # assert os.path.exists(encoder_checkpoint), f'{encoder_checkpoint} does not exist!'
+        # self.rx_encoder = self._load_encoder(encoder_checkpoint)
+        # self.rx_encoder.eval().to(self.rx_device)
+        # zq = self.rx_encoder.initial_encoder(self.receptive_length, self.rx_device)
+        # print("Load rx_encoder: %s" % (encoder_checkpoint))
 
         assert os.path.exists(decoder_checkpoint), f'{decoder_checkpoint} does not exist!'
         self.decoder = self._load_decoder(decoder_checkpoint)
         self.decoder.eval().to(self.rx_device)
-        self.decoder.initial_decoder(zq)
+        # self.decoder.initial_decoder(zq)
         print("Load decoder: %s" % (decoder_checkpoint))
 
 
@@ -189,8 +189,8 @@ class AudioCodecStreamer(abc.ABC):
         # file dump if requested
         self.input_dump = []
         self.output_dump = []
-        self.input_dump_filename = None
-        self.output_dump_filename = None
+        self.input_dump_filename = "stream_in.wav"
+        self.output_dump_filename = "stream_out.wav"
 
         # streaming statistics
         self.frame_drops = 0
@@ -233,7 +233,8 @@ class AudioCodecStreamer(abc.ABC):
             start = time.time()
             x = x.to(self.rx_device)
             with torch.no_grad():
-                if (self.rx_encoder is not None) and (self.decoder is not None):
+                # if (self.rx_encoder is not None) and (self.decoder is not None):
+                if self.decoder is not None:
                     x = self._decode(x)
             self.decoder_times.append(time.time() - start)
             self.output_queue.put(x)
@@ -274,7 +275,6 @@ class AudioCodecStreamer(abc.ABC):
             self.output_dump.append(output_data)
 
         data = output_data.transpose(1, 0).contiguous().numpy()
-
         return data
 
     def _callback(self, indata, outdata, frames, _time, status):
