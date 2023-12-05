@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import mir_eval
 
 
-SAMPLE_RATE = 48000
+
 
 def load_config(path_to_config):
     with open(path_to_config, "r") as f:
@@ -125,7 +125,7 @@ def reconstruct_test(model, device, checkpoint,tag):
     sf.write(
         mixed_output_path,
         audio,
-        48000,
+        SAMPLE_RATE,
         "PCM_16",
     )
 
@@ -141,12 +141,11 @@ def reconstruct_test(model, device, checkpoint,tag):
         sf.write(
             pred_output_path,
             y,
-            48000,
+            SAMPLE_RATE,
             "PCM_16",
         )
 
-
-
+SAMPLE_RATE = 48000
 # Load model
 model = "vctk_denoise"
 path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
@@ -154,9 +153,9 @@ path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml
 config = load_config(path_to_config)
 generator_model = generator_audiodec(**config["generator_params"])
 
-tag = "MelL1_Adam-adjusted"
-checkpoint = 111661
-model_checkpoint = os.path.join("exp", "denoise", f"MelL1_Adam-adjusted_checkpoint-{checkpoint}.pkl")
+tag = "Mel_L1-MAE-Adv"
+checkpoint = 11166
+model_checkpoint = os.path.join("exp", "denoise", f"HPC-AudioDec-Fresh-Mel_L1-MAE-Advcheckpoint-11166.pkl")
 
 
 state_dict = torch.load(model_checkpoint, map_location="cpu")

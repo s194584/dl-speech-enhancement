@@ -31,9 +31,10 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser()
 parser.add_argument("-e", "--environment", default="LAPTOP")
+parser.add_argument("-sr", "--sample_rate", default=48000)
 
 args = parser.parse_args()
-
+SAMPLE_RATE = int(args.sample_rate)
 ENVIRONMENT = args.environment
 # ENVIRONMENT = "HPC"
 
@@ -43,12 +44,12 @@ if ENVIRONMENT == "LAPTOP":
     NOISE_PATH = "corpus/train/noise"
     NOISE_ROOT = "noise"
 
-    task_name = "Laptop-w-Dis"
+    task_name = "Laptop-8kHz"
     task = Task.init("dl-speech-enhancement", task_name)
     logger = task.get_logger()
     torch.set_num_threads(4)
 elif ENVIRONMENT == "HPC":
-    task_name = "HPC-AudioDec-Fresh-Mel_L1-Adv"
+    task_name = "HPC-AudioDec-Fresh-Mel_L1-MAE-8kHz"
     task = Task.init("dl-speech-enhancement", task_name)
     logger = task.get_logger()
     CLEAN_PATH = "/work3/s164396/data/DNS-Challenge-4/datasets_fullband/clean_fullband/vctk_wav48_silence_trimmed"
@@ -125,7 +126,11 @@ path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml
 
 config = load_config(path_to_config)
 model['generator'] = generator_audiodec(**config["generator_params"])
+
+
+## Discriminator
 model['discriminator'] = discriminator_hifigan(**config["discriminator_params"])
+model['discriminator'] = model['discriminator'].to(device=tx_device)
 
 # Optimizer
 # generator_optimizer_type: Adam
@@ -146,28 +151,35 @@ def load_from_pretrained(checkpoint):
     model['generator'].load_state_dict(state_dict)
 
 ## Generator
-encoder_checkpoint = os.path.join("exp","denoise","MelL1_Adam-adjusted_checkpoint-111661.pkl")
-load_from_pretrained(encoder_checkpoint)
+# encoder_checkpoint = os.path.join("exp","denoise","MelL1_Adam-adjusted_checkpoint-111661.pkl")
+# load_from_pretrained(encoder_checkpoint)
 encoder = model['generator'].encoder
 encoder.to(device=tx_device)
 decoder = model['generator'].decoder
 decoder.to(device=tx_device)
 
-## Discriminator
-model['discriminator'] = model['discriminator'].to(device=tx_device)
 
 
 mae = nn.L1Loss().to(device)
 mse = nn.MSELoss().to(device)
 snr = SignalNoiseRatio().to(device)
-mel_spectrogram = transforms.MelSpectrogram(
-    sample_rate=48000,
-    n_mels=80,
-    f_max=24000,
-    n_fft=2048,
-    hop_length=300,
-).to(device)
 
+if SAMPLE_RATE==48000:
+    mel_spectrogram = transforms.MelSpectrogram(
+        sample_rate=48000,
+        n_mels=80,
+        f_max=20000,
+        n_fft=2048,
+        hop_length=300,
+    ).to(device)
+else:
+    mel_spectrogram = transforms.MelSpectrogram(
+        sample_rate=SAMPLE_RATE,
+        n_mels=90,
+        f_max=20000,
+        n_fft=2048,
+        hop_length=300,
+    ).to(device)
 
 def Mel_L1(pred, target):
     pred_mel = mel_spectrogram(pred)
@@ -215,10 +227,9 @@ def freeze_decoder(model):
 # freeze_decoder(model['generator'])
 
 # Loading data ######################
-sample_rate = 48000
-batch_length = 96_000
-clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, batch_length, sample_rate)
-noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, batch_length, sample_rate)
+batch_length = 2*SAMPLE_RATE
+clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, batch_length, SAMPLE_RATE)
+noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, batch_length, SAMPLE_RATE)
 
 clean_splits = define_splits(clean_dataset, random_generator)
 noise_splits = define_splits(noise_dataset, random_generator)
@@ -277,7 +288,8 @@ def training_step(clean_sample_batch, mixed_sample_batch):
 
     gen_loss = calculate_train_loss(y_pred, clean_sample_batch)
 
-    gen_loss += criterion["gen_adv"](y_pred)
+    if model['discriminator'] != None:
+        gen_loss += criterion["gen_adv"](y_pred)
 
     # feature matching loss
     # if natural_p is not None:
@@ -297,7 +309,9 @@ def training_step(clean_sample_batch, mixed_sample_batch):
             config["generator_grad_norm"],
         )
     optimizer['generator'].step()
-    dis_loss = None
+
+
+    dis_loss = torch.tensor(1)
     if model['discriminator'] != None:
         with torch.no_grad():
             encoded_batch = encoder(mixed_sample_batch)
@@ -344,6 +358,7 @@ epochs = [i for i in range(500)]
 # Maybe have an epoch here
 train_acc_batch_size = 0
 train_steps = 0
+model['discriminator'] = None
 record_audio_snippets = False
 
 print("Start training")
@@ -374,7 +389,6 @@ def save_snippets(type, sample_batch):
             48000,
             "PCM_16",
         )
-
 
 for epoch in epochs:
     # Training loop #####################

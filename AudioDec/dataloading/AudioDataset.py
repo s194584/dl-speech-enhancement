@@ -1,6 +1,7 @@
 import os
 import random
 
+import torchaudio
 from torch.utils.data import Dataset
 import soundfile as sf
 import glob
@@ -27,5 +28,13 @@ class AudioDataset(Dataset):
 
     def __getitem__(self, idx):
         audio_path = os.path.join(self.audio_dir, self.audio_file_names[idx])
-        audio, _ = sf.read(audio_path, always_2d=True)
+        audio, original_sample_rate = torchaudio.load(audio_path, backend="soundfile")
+        audio = (
+            torchaudio.functional.resample(
+                audio, original_sample_rate, self.sample_rate
+            )
+            .transpose(1, 0)
+            .detach()
+            .numpy()
+        )
         return audio
