@@ -86,11 +86,11 @@ model: dict[str, torch.nn.Module] = {}
 path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
 
 config = load_config(path_to_config)
-model["generator"] = GeneratorAudioDec(model_sample_rate=SAMPLE_RATE, **config["generator_params"])
+model["generator"] = GeneratorAudioDec(**config["generator_params"]).to(device)
 
 ## Discriminator
 model["discriminator"] = DiscriminatorHiFiGAN(**config["discriminator_params"])
-model["discriminator"] = model["discriminator"].to(tx_device)
+model["discriminator"] = model["discriminator"].to(device)
 
 # Optimizer
 # generator_optimizer_type: Adam
@@ -99,7 +99,7 @@ model["discriminator"] = model["discriminator"].to(tx_device)
 #     betas: [0.5, 0.9]
 #     weight_decay: 0.0
 optimizer = {}
-optimizer["generator"] = Adam(model["generator"].parameters(), lr=5e-5)
+optimizer["generator"] = Adam(model["generator"].parameters(), lr=1.0e-4)
 optimizer["discriminator"] = Adam(model["discriminator"].parameters(), lr=2.0e-4)
 
 
@@ -114,10 +114,6 @@ def load_from_pretrained(checkpoint):
 ## Generator
 # encoder_checkpoint = os.path.join("exp", "denoise", "HPC-Fresh-Melcheckpoint-83745.pkl")
 # load_from_pretrained(encoder_checkpoint)
-encoder = model["generator"].encoder
-encoder.to(device=tx_device)
-decoder = model["generator"].decoder
-decoder.to(device=tx_device)
 
 measures = {
     "MAE": nn.L1Loss().to(device),
@@ -166,14 +162,14 @@ def calculate_discriminator_loss(pred, target):
 
 
 # Loading data ######################
-clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, 48000)
-noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, 48000)
+clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, SAMPLE_RATE)
+noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, SAMPLE_RATE)
 
-batch_length = 48000
+batch_length = 1*SAMPLE_RATE
 if ENVIRONMENT == "LAPTOP":
     batch_size = 4
 else:
-    batch_size = 6
+    batch_size = 16
 
 split = [0.7, 0.15, 0.15]
 train_clean_dataloader, val_clean_dataloader, _ = get_dataloaders(clean_dataset, split, batch_size, batch_length,
@@ -229,7 +225,6 @@ def model_step(target, x, mode='train'):
         optimizer["generator"].zero_grad()
         gen_loss.backward()
 
-        # Printing max, min and avg absolute gradients
 
         # Clip gradient
         if config["generator_grad_norm"] > 0:
@@ -237,7 +232,6 @@ def model_step(target, x, mode='train'):
                 model["generator"].parameters(),
                 config["generator_grad_norm"],
             )
-        print_gradients(model['generator'])
         optimizer["generator"].step()
 
     # Discriminator loss

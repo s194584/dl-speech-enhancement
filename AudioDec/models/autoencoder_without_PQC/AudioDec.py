@@ -27,7 +27,6 @@ class Generator(torch.nn.Module):
 
     def __init__(
         self,
-        model_sample_rate=48000,
         input_channels=1,
         output_channels=1,
         encode_channels=32,
@@ -52,7 +51,6 @@ class Generator(torch.nn.Module):
         else:
             raise NotImplementedError(f"Codec ({codec}) is not supported!")
         self.mode = mode
-        self.sample_rate = model_sample_rate
         self.input_channels = input_channels
 
         self.encoder = encoder(
