@@ -184,3 +184,4 @@ __pycache__/
 # models
 *.pkl
 /figs/
+/low_pass_filter.py
