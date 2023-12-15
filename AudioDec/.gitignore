@@ -10,7 +10,49 @@ __pycache__/
 #corpus/
 # MODELS/
 exp/
-test-output/
+test-output-old/
+About
+corpus
+demo
+figs
+job_out
+runs
+slurmlogs
+snippets
+test_out
+add_noise_test.py
+Ben.mp3
+clean0.wav
+CODE_OF_CONDUCT.md
+codecStatistic.py
+codecTest.py
+codecTrain.py
+CONTRIBUTING.md
+demoFile.py
+demoStream.py
+denoiseStream.py
+inference_with_noise.py
+input.wav
+LICENSE
+noise_out.wav
+out.wav
+output.wav
+parse_options.sh
+plot_audio_functions.py
+README.md
+requirements.txt
+resample.py
+stream_in.wav
+stream_out.wav
+submit_autoencoder.sh
+submit_codec_libritts.sh
+submit_codec_vctk.sh
+submit_codecUniv_vctk.sh
+submit_denoise.sh
+submit_statistic.sh
+submit_vocoder.sh
+test.wav
+
 
 
 # Distribution / packaging
