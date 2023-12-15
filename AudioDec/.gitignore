@@ -11,18 +11,18 @@ __pycache__/
 # MODELS/
 exp/
 test-output-old/
-About
-corpus
-demo
-figs
-job_out
-runs
-slurmlogs
-snippets
-test_out
+About/
+corpus/
+demo/
+figs/
+job_out/
+runs/
+slurmlogs/
+snippets/
+test_out/
 add_noise_test.py
 Ben.mp3
-clean0.wav
+test-output-old/clean0.wav
 CODE_OF_CONDUCT.md
 codecStatistic.py
 codecTest.py
@@ -32,18 +32,18 @@ demoFile.py
 demoStream.py
 denoiseStream.py
 inference_with_noise.py
-input.wav
+test-output-old/input.wav
 LICENSE
-noise_out.wav
-out.wav
-output.wav
+test-output-old/noise_out.wav
+test-output-old/out.wav
+test-output-old/output.wav
 parse_options.sh
 plot_audio_functions.py
 README.md
 requirements.txt
 resample.py
-stream_in.wav
-stream_out.wav
+test-output-old/stream_in.wav
+test-output-old/stream_out.wav
 submit_autoencoder.sh
 submit_codec_libritts.sh
 submit_codec_vctk.sh
@@ -51,7 +51,7 @@ submit_codecUniv_vctk.sh
 submit_denoise.sh
 submit_statistic.sh
 submit_vocoder.sh
-test.wav
+test-output-old/test.wav
 
 
 
@@ -183,3 +183,4 @@ __pycache__/
 
 # models
 *.pkl
+/figs/
