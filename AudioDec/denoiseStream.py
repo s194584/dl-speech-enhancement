@@ -14,7 +14,7 @@ import os
 
 import torch
 import argparse
-from utils.audiodec import AudioDec, AudioDecStreamer, assign_model
+from utils.audiodec_without_PQC import AudioDec, AudioDecStreamer, assign_model
 
 
 def main():

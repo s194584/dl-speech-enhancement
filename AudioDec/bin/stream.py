@@ -64,16 +64,16 @@ class AudioCodec(abc.ABC):
 
     def load_receiver(self, encoder_checkpoint, decoder_checkpoint):
         # load receiver model(s)
-        # assert os.path.exists(encoder_checkpoint), f'{encoder_checkpoint} does not exist!'
-        # self.rx_encoder = self._load_encoder(encoder_checkpoint)
-        # self.rx_encoder.eval().to(self.rx_device)
-        # zq = self.rx_encoder.initial_encoder(self.receptive_length, self.rx_device)
-        # print("Load rx_encoder: %s" % (encoder_checkpoint))
+        assert os.path.exists(encoder_checkpoint), f'{encoder_checkpoint} does not exist!'
+        self.rx_encoder = self._load_encoder(encoder_checkpoint)
+        self.rx_encoder.eval().to(self.rx_device)
+        zq = self.rx_encoder.initial_encoder(self.receptive_length, self.rx_device)
+        print("Load rx_encoder: %s" % (encoder_checkpoint))
 
         assert os.path.exists(decoder_checkpoint), f'{decoder_checkpoint} does not exist!'
         self.decoder = self._load_decoder(decoder_checkpoint)
         self.decoder.eval().to(self.rx_device)
-        # self.decoder.initial_decoder(zq)
+        self.decoder.initial_decoder(zq)
         print("Load decoder: %s" % (decoder_checkpoint))
 
 
@@ -131,7 +131,7 @@ class AudioCodecStreamer(abc.ABC):
                                 To get a list of all output devices call python3 -m sounddevice.
         :param input_channels:  number of input channels, usually 1 but might be multiple microphones as well
         :param output_channels: number of output channels, usually 2 for binaural audio
-        :param frame_size:      number of audio samples in a frame
+        :param frame_size:      number of audio samples in a fr
         :param sample_rate:     sample rate of the audio signal
         :param gain:            linear factor to scale the input audio by
         :param max_latency:     maximal accepted latency in seconds before frames get dropped
@@ -233,8 +233,7 @@ class AudioCodecStreamer(abc.ABC):
             start = time.time()
             x = x.to(self.rx_device)
             with torch.no_grad():
-                # if (self.rx_encoder is not None) and (self.decoder is not None):
-                if self.decoder is not None:
+                if (self.rx_encoder is not None) and (self.decoder is not None):
                     x = self._decode(x)
             self.decoder_times.append(time.time() - start)
             self.output_queue.put(x)
