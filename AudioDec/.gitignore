@@ -9,8 +9,10 @@ __pycache__/
 # DATA
 #corpus/
 # MODELS/
+.idea/
 exp/
 test-output-old/
+training_output/
 About/
 corpus/
 demo/
