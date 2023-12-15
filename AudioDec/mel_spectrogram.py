@@ -16,8 +16,8 @@ print(sf.__libsndfile_version__)
 
 path_clean = os.path.join('corpus', 'test', 'book_00002_chp_0005_reader_11980_3_seg_0.wav')
 checkpoint=111661
-path_mixed = f'job_out/Mel_L1-MAE-Adv___11166___mixed.wav'
-path_pred = f'job_out/Mel_L1-MAE-Adv___11166___reconstructed.wav'
+path_mixed = f'job_out/Mel-Adv____14888___mixed.wav'
+path_pred = f'job_out/Mel-Adv____14888___reconstructed.wav'
 
 names = ['clean', 'mixed', 'reconstruction']
 paths = [
@@ -64,13 +64,48 @@ def print_measures(waveform1, waveform2):
             print(f'{measure_name}: {measure(waveform1, waveform2)}')
 
 
-waveform_clean, sample_rate = torchaudio.load(path_clean)
-waveform_mixed, sample_rate = torchaudio.load(path_mixed)
-waveform_pred, sample_rate = torchaudio.load(path_pred)
+waveform_clean, sample_rate_clean = torchaudio.load(path_clean)
+waveform_mixed, sample_rate_mixed = torchaudio.load(path_mixed)
+waveform_pred, sample_rate_pred = torchaudio.load(path_pred)
+
+waveform_clean = torchaudio.functional.resample(waveform_clean,sample_rate_clean,48000)
+waveform_mixed = torchaudio.functional.resample(waveform_mixed,sample_rate_mixed,48000)
+waveform_pred = torchaudio.functional.resample(waveform_pred,sample_rate_pred,48000)
 waveform_clean = torch.narrow(waveform_clean, 1, 0, waveform_pred.shape[1])
 
 # spectrogram = transform(waveform)
 plot_specgram([waveform_clean, waveform_mixed, waveform_pred], 48000, ["Clean", "Mixed", "Prediction"])
+
+def plot_waveform(waveforms, sample_rate, title="Waveform", xlim=None, ylim=None):
+    figure, axes = plt.subplots(len(waveforms), 1)
+
+    for c, waveform in enumerate(waveforms):
+        waveform = waveform.numpy()
+
+        num_channels, num_frames = waveform.shape
+        time_axis = torch.arange(0, num_frames) / sample_rate
+        axes[c].plot(time_axis, waveform[0], linewidth=1)
+        axes[c].grid(True)
+        if num_channels > 1:
+          axes[c].set_ylabel(f'Channel {c+1}')
+        if xlim:
+          axes[c].set_xlim(xlim)
+        if ylim:
+          axes[c].set_ylim(ylim)
+        figure.suptitle(title)
+    plt.show(block=False)
+
+plot_waveform([waveform_clean, waveform_mixed, waveform_pred],48000,"Waveforms")
+
+
+
+
+
+
+
+
+
+
 
 
 print("\n- Clean vs. Clean-----")

@@ -5,7 +5,7 @@ import soundfile as sf
 import numpy as np
 import torchaudio
 
-from models.autoencoder.AudioDec import Generator as generator_audiodec
+from models.autoencoder_without_PQC.AudioDec import Generator as generator_audiodec
 import math
 import yaml
 
@@ -13,6 +13,18 @@ from pesq import pesq
 from pystoi import stoi
 import matplotlib.pyplot as plt
 import mir_eval
+import soundfile as sf
+import librosa
+import os
+import matplotlib.pyplot as plt
+import torch
+import torchaudio
+from torch.nn.modules.loss import _Loss
+from torchaudio import transforms
+from torch import nn, functional
+from torchmetrics.audio import SignalNoiseRatio, ScaleInvariantSignalDistortionRatio, SignalDistortionRatio, \
+    ShortTimeObjectiveIntelligibility
+from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 
 
 
@@ -111,39 +123,28 @@ def reconstruct_test(model, device, checkpoint,tag):
     mixed_output_path = (
         f"job_out/{tag}___{checkpoint}___mixed.wav"
     )
-    clean_audio = np.array(sf.read(clean_file_path)[0])
-    noise_audio = np.array(sf.read(noise_file_path)[0])
+    clean_audio, clean_sr = torchaudio.load(clean_file_path)
+    noise_audio, noise_sr = torchaudio.load(noise_file_path)
 
-    if len(clean_audio) > len(noise_audio):
-        clean_audio = clean_audio[: len(noise_audio)]
+    if clean_audio.shape[1] > noise_audio.shape[1]:
+        clean_audio = torch.narrow(clean_audio, 1, 0, noise_audio.shape[1])
     else:
-        noise_audio = noise_audio[: len(clean_audio)]
+        noise_audio = torch.narrow(noise_audio, 1, 0, clean_audio.shape[1])
 
-    audio = add_noise(torch.tensor(clean_audio), torch.tensor(noise_audio), 10)
-    audio = audio.numpy()
+    clean_audio = torchaudio.functional.resample(clean_audio,clean_sr,SAMPLE_RATE)
+    noise_audio = torchaudio.functional.resample(noise_audio,noise_sr,SAMPLE_RATE)
 
-    sf.write(
-        mixed_output_path,
-        audio,
-        SAMPLE_RATE,
-        "PCM_16",
-    )
+    audio = add_noise(clean_audio, noise_audio, 10)
 
-    encoder = model.encoder
-    decoder = model.decoder
+    torchaudio.save(mixed_output_path, audio, SAMPLE_RATE)
 
     audio_t = np.expand_dims(audio, axis=0)  # (T, C) -> (C, 1, T)
-    audio_t = np.expand_dims(audio_t, axis=0)  # (T, C) -> (C, 1, T)
+    # audio_t = np.expand_dims(audio_t, axis=0)  # (T, C) -> (C, 1, T)
     with torch.no_grad():
-        audio_t = torch.tensor(audio_t, dtype=torch.float).to(device)
-        encoded_audio = encoder(audio_t)
-        y = decoder(encoded_audio)[0].squeeze(1).transpose(1, 0).cpu().numpy()
-        sf.write(
-            pred_output_path,
-            y,
-            SAMPLE_RATE,
-            "PCM_16",
-        )
+        audio_t = torch.tensor(audio_t).to(device)
+        y = model(audio_t,clean_sr)[0]
+        torchaudio.save(pred_output_path, y, SAMPLE_RATE)
+    return clean_audio, audio, y
 
 SAMPLE_RATE = 48000
 # Load model
@@ -151,11 +152,11 @@ model = "vctk_denoise"
 path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
 
 config = load_config(path_to_config)
-generator_model = generator_audiodec(**config["generator_params"])
+generator_model = generator_audiodec(model_sample_rate=48000,**config["generator_params"])
 
-tag = "Mel_L1-MAE-Adv"
-checkpoint = 11166
-model_checkpoint = os.path.join("exp", "denoise", f"HPC-AudioDec-Fresh-Mel_L1-MAE-Advcheckpoint-11166.pkl")
+tag = "Mel_Shape"
+checkpoint = 59552
+model_checkpoint = os.path.join("exp", "denoise", f"Mel_Shape_checkpoint-59552.pkl")
 
 
 state_dict = torch.load(model_checkpoint, map_location="cpu")
@@ -165,4 +166,79 @@ encoder.to(device=device)
 decoder = generator_model.decoder
 decoder.to(device=device)
 
-reconstruct_test(generator_model, "cpu", checkpoint, tag)
+clean, mixed, pred = reconstruct_test(generator_model, "cpu", checkpoint, tag)
+
+def plot_specgram(waveforms, sample_rate, title, xlim=None):
+    figure, axes = plt.subplots(len(waveforms), 1)
+    for c, waveform in enumerate(waveforms):
+        waveform = waveform.numpy()
+
+        axes[c].specgram(waveform[0], Fs=sample_rate)
+        axes[c].set_title(title[c])
+    plt.show(block=False)
+
+
+mel_spectrogram = transforms.MelSpectrogram(48000)
+mae = nn.L1Loss()
+def Mel_L1(pred, target):
+    pred_mel = mel_spectrogram(pred)
+    target_mel = mel_spectrogram(target)
+
+    return mae(pred_mel,target_mel)
+
+
+def print_measures(waveform1, waveform2):
+    measures = {
+        'MAE': nn.L1Loss(),
+        'MSE': nn.MSELoss(),
+        'SNR': SignalNoiseRatio(),
+        'SDR': SignalDistortionRatio(),
+        'SI-SDR(True)': ScaleInvariantSignalDistortionRatio(zero_mean=True),
+        'SI-SDR(False)': ScaleInvariantSignalDistortionRatio(zero_mean=False),
+        'PESQ': PerceptualEvaluationSpeechQuality(fs=16000, mode='wb'),
+        'STOI': ShortTimeObjectiveIntelligibility(48000),
+        'Mel-L1': Mel_L1,
+    }
+    for measure_name, measure in measures.items():
+        if measure_name == 'PESQ':
+            resampler = transforms.Resample(48000, 16000)
+            print(f'{measure_name}: {measure(resampler(waveform1), resampler(waveform2))}')
+        else:
+            print(f'{measure_name}: {measure(waveform1, waveform2)}')
+
+
+waveform_clean = torchaudio.functional.resample(clean,SAMPLE_RATE,48000)
+waveform_mixed = torchaudio.functional.resample(mixed,SAMPLE_RATE,48000)
+waveform_pred = torchaudio.functional.resample(pred,SAMPLE_RATE,48000)
+waveform_clean = torch.narrow(waveform_clean, 1, 0, waveform_pred.shape[1])
+
+# spectrogram = transform(waveform)
+plot_specgram([waveform_clean, waveform_mixed, waveform_pred], 48000, ["Clean", "Mixed", "Prediction"])
+
+def plot_waveform(waveforms, sample_rate, title="Waveform", xlim=None, ylim=None):
+    figure, axes = plt.subplots(len(waveforms), 1)
+
+    for c, waveform in enumerate(waveforms):
+        waveform = waveform.numpy()
+
+        num_channels, num_frames = waveform.shape
+        time_axis = torch.arange(0, num_frames) / sample_rate
+        axes[c].plot(time_axis, waveform[0], linewidth=1)
+        axes[c].grid(True)
+        if num_channels > 1:
+          axes[c].set_ylabel(f'Channel {c+1}')
+        if xlim:
+          axes[c].set_xlim(xlim)
+        if ylim:
+          axes[c].set_ylim(ylim)
+        figure.suptitle(title)
+    plt.show(block=False)
+
+plot_waveform([waveform_clean, waveform_mixed, waveform_pred],48000,"Waveforms")
+
+
+
+
+
+
+
