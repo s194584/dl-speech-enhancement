@@ -1,16 +1,12 @@
 import os
-import random
-
 import torchaudio
 from torch.utils.data import Dataset
-import soundfile as sf
 import glob
 
 
 class AudioDataset(Dataset):
-    def __init__(self, audio_dir, audio_root, batch_length, sample_rate):
+    def __init__(self, audio_dir, audio_root, sample_rate):
         self.audio_dir = audio_dir
-        self.batch_length = batch_length
         self.sample_rate = sample_rate
         self.audio_file_names = []
         for i in range(1, 3):

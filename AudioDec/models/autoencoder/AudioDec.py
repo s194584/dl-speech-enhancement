@@ -151,9 +151,9 @@ class StreamGenerator(Generator):
     def initial_encoder(self, receptive_length, device):
         self.quantizer.initial()
         z = self.encode(torch.zeros(1, self.input_channels, receptive_length).to(device))
-        # idx = self.quantize(z)
-        # zq = self.lookup(idx)
-        return z
+        idx = self.quantize(z)
+        zq = self.lookup(idx)
+        return zq
 
 
     def initial_decoder(self, zq):
@@ -165,8 +165,8 @@ class StreamGenerator(Generator):
         if channel != self.input_channels: 
             x = x.reshape(-1, self.input_channels, length) # (B, C, T) -> (B', C', T)
         x = self.encoder.encode(x)
-        # z = self.projector.encode(x)
-        return x
+        z = self.projector.encode(x)
+        return z
 
 
     def quantize(self, z):
@@ -179,7 +179,7 @@ class StreamGenerator(Generator):
 
 
     def decode(self, zq):
-        return self.decoder.decode(zq)
+        return self.decoder.decode(zq.transpose(2, 1))
 
 
     def reset_buffer(self):
