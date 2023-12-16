@@ -48,7 +48,7 @@ if ENVIRONMENT == "LAPTOP":
     logger = task.get_logger()
     torch.set_num_threads(4)
 elif ENVIRONMENT == "HPC":
-    task_name = "24kHz-Multi-Mel_"
+    task_name = "Grad-24k_"
     task = Task.init("dl-speech-enhancement", task_name)
     logger = task.get_logger()
     CLEAN_PATH = "/work3/s164396/data/DNS-Challenge-4/datasets_fullband/clean_fullband/vctk_wav48_silence_trimmed"
@@ -169,7 +169,7 @@ batch_length = 1*SAMPLE_RATE
 if ENVIRONMENT == "LAPTOP":
     batch_size = 4
 else:
-    batch_size = 16
+    batch_size = 10
 
 split = [0.7, 0.15, 0.15]
 train_clean_dataloader, val_clean_dataloader, _ = get_dataloaders(clean_dataset, split, batch_size, batch_length,
@@ -321,7 +321,7 @@ for epoch in epochs:
     # Do a checkpoint
     if ENVIRONMENT != "LAPTOP" and epoch % 1 == 0:
         check_point_path = os.path.join(
-            "exp", "denoise", "fresh", f"{task_name}checkpoint-{train_steps}.pkl"
+            "job_out", f"{task_name}checkpoint-{train_steps}.pkl"
         )
         torch.save(model["generator"].state_dict(), check_point_path)
 
