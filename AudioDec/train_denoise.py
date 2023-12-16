@@ -38,9 +38,6 @@ config = load_config(path_to_config)
 
 parser = ArgumentParser()
 parser.add_argument("-e", "--environment", default="LAPTOP")
-parser.add_argument("-sr", "--sample_rate", default=48000)
-parser.add_argument("-s", "--seed", default=82)
-parser.add_argument("-ndr", "--noise_dropout_rate", default=0.5)
 
 args = parser.parse_args()
 ENVIRONMENT = args.environment
@@ -71,11 +68,11 @@ else:
 
 task.connect_configuration(config)
 
-SAMPLE_RATE = int(config["sample_rate"])
-NOISE_DROPOUT_RATE = float(config["noise_dropout_rate"])
-SEED = int(config["seed"])
-EPOCHS = int(config["epochs"])
-EPOCH_TO_ENABLE_DISCRIMINATOR = int(config["epoch_to_enable_discriminator"])
+SAMPLE_RATE = config["sample_rate"]
+NOISE_DROPOUT_RATE = config["noise_dropout_rate"]
+SEED = config["seed"]
+EPOCHS = config["epochs"]
+EPOCH_TO_ENABLE_DISCRIMINATOR = config["epoch_to_enable_discriminator"]
 
 # device assignment
 if ENVIRONMENT == "LAPTOP":
@@ -144,15 +141,15 @@ loss_constituents = {}
 
 
 def calculate_generator_loss(pred, target):
-    mel_loss = int(config["lambda_mel_loss"]) * measures["Mel-loss"](pred, target)
+    mel_loss = config["lambda_mel_loss"] * measures["Mel-loss"](pred, target)
     adv_loss = torch.tensor(0)
     feat_loss = torch.tensor(0)
     if discriminator_enabled:
         p_ = model["discriminator"](pred)
         with torch.no_grad():
             p = model["discriminator"](target)
-        adv_loss = int(config["lambda_adv"]) * criterion["gen_adv"](pred)
-        feat_loss = int(config["lambda_feat_match"]) * criterion["feat_match"](p_, p)
+        adv_loss = config["lambda_adv"] * criterion["gen_adv"](pred)
+        feat_loss = config["lambda_feat_match"] * criterion["feat_match"](p_, p)
     return mel_loss + adv_loss + feat_loss, (("mel_loss", mel_loss), ("adv_loss", adv_loss), ("feat_loss", feat_loss))
 
 
@@ -162,7 +159,7 @@ def calculate_discriminator_loss(pred, target):
 
     real_loss, fake_loss = criterion["dis_adv"](p_, p)
     dis_loss = real_loss + fake_loss
-    dis_loss *= int(config["lambda_adv"])
+    dis_loss *= config["lambda_adv"]
 
     return dis_loss
 
