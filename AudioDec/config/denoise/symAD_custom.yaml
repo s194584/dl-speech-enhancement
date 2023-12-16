@@ -139,9 +139,9 @@ num_workers: 2              # Number of workers in Pytorch DataLoader.
 ###########################################################
 generator_optimizer_type: Adam
 generator_optimizer_params:
-    lr: 5e-5
+    lr: 5.0e-5
 #    betas: [0.5, 0.9]
-    weight_decay: 10e-5
+    weight_decay: 1.0e-6
 generator_scheduler_type: StepLR
 generator_scheduler_params:
     step_size: 200000      # Generator's scheduler step size.
@@ -151,7 +151,7 @@ discriminator_optimizer_type: Adam
 discriminator_optimizer_params:
     lr: 2.0e-4
 #    betas: [0.5, 0.9]
-    weight_decay: 10e-5
+    weight_decay: 1.0e-6
 discriminator_scheduler_type: MultiStepLR
 discriminator_scheduler_params:
     gamma: 0.5

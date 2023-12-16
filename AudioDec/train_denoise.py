@@ -28,7 +28,7 @@ from argparse import ArgumentParser
 
 def load_config(path_to_config):
     with open(path_to_config, "r") as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.safe_load(f)
 
     return config
 
