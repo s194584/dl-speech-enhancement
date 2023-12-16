@@ -3,7 +3,7 @@
 import numpy as np
 import torchaudio
 
-from dataloader import CollaterAudio
+from dataloader import CollaterAudio, get_dataloaders, add_noise
 from dataloader.AudioDataset import AudioDataset
 from torch.utils.data import DataLoader, random_split
 import torch
@@ -19,6 +19,7 @@ from argparse import ArgumentParser
 parser = ArgumentParser()
 parser.add_argument("-e", "--environment", default="LAPTOP")
 parser.add_argument("-sr", "--sample_rate", default=48000)
+parser.add_argument("-s", "--seed", default=93)
 
 args = parser.parse_args()
 SAMPLE_RATE = int(args.sample_rate)
@@ -38,39 +39,6 @@ elif ENVIRONMENT == "HPC":
 else:
     raise Exception("Illegal argument: " + ENVIRONMENT)
 
-
-def trim_audio(batch):
-    batch = [b for b in batch if (len(b[0]) > 1)]
-    assert len(batch) > 0, f"No qualified audio pairs.!"
-    return batch
-
-
-def add_noise(speech, noise, snr):
-    assert speech.shape == noise.shape, "Shapes are not equal!"
-
-    speech_power = speech.norm(p=2)
-    noise_power = noise.norm(p=2)
-
-    snr = math.exp(snr / 10)
-    scale = snr * noise_power / speech_power
-    noisy_speech = (scale * speech + noise) / 2
-
-    return noisy_speech
-
-
-def define_splits(
-        dataset, generator, train_percentage=0.7, val_percentage=0.15, test_percentage=0.15
-):
-    split_datasets = random_split(
-        dataset,
-        [train_percentage, val_percentage, test_percentage],
-        generator=generator,
-    )
-    return {
-        "train": split_datasets[0],
-        "validation": split_datasets[1],
-        "test": split_datasets[2],
-    }
 
 
 def load_config(path_to_config):
@@ -94,11 +62,12 @@ else:
 
 device = torch.device(tx_device)
 
+
 # Loading model #####################
 def define_AD_model():
     # path_to_model_dir = os.path.join("exp","denoise","symAD_vctk_48000_hop300","config.yml")
-    path_to_config = os.path.join("exp","denoise","symAD_vctk_48000_hop300","config.yml")
-    path_to_model = os.path.join("exp","denoise","symAD_vctk_48000_hop300","checkpoint-200000steps.pkl")
+    path_to_config = os.path.join("exp", "denoise", "symAD_vctk_48000_hop300", "config.yml")
+    path_to_model = os.path.join("exp", "denoise", "symAD_vctk_48000_hop300", "checkpoint-200000steps.pkl")
     config = load_config(path_to_config)
     generator = generator_audiodec_original(**config['generator_params'])
     state_dict = torch.load(path_to_model)
@@ -106,9 +75,10 @@ def define_AD_model():
     generator = generator.eval().to(device)
     return generator
 
-def load_flagship():
+
+def load_flagship(model_name):
     path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
-    path_to_model = os.path.join("exp","denoise","HPC-AudioDec-Fresh-Mel_L1-MAE-Advcheckpoint-22332.pkl")
+    path_to_model = os.path.join("exp", "denoise", model_name)
     config = load_config(path_to_config)
     generator = generator_audiodec(**config['generator_params'])
     state_dict = torch.load(path_to_model, map_location=torch.device('cpu'))
@@ -117,55 +87,37 @@ def load_flagship():
 
 
 # Loading data ######################
+# Loading data ######################
+clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, SAMPLE_RATE)
+noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, SAMPLE_RATE)
+
 batch_length = 2 * SAMPLE_RATE
-clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, batch_length, SAMPLE_RATE)
-noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, batch_length, SAMPLE_RATE)
-
-clean_splits = define_splits(clean_dataset, random_generator)
-noise_splits = define_splits(noise_dataset, random_generator)
-
-collator = CollaterAudio(batch_length)
-
-if ENVIRONMENT == 'LAPTOP':
-    batch_size = 5
+if ENVIRONMENT == "LAPTOP":
+    batch_size = 4
 else:
-    batch_size = 8
+    batch_size = 10
 
+split = [0.7, 0.15, 0.15]
+train_clean_dataloader, _, test_clean_dataloader = get_dataloaders(clean_dataset, split, batch_size, batch_length,
+                                                                   args.seed)
+train_noise_dataloader, _, test_noise_dataloader = get_dataloaders(noise_dataset, split, batch_size, batch_length,
+                                                                   args.seed)
 
-def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() % 2 ** 32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
-
-
-def create_dataloader(dataset, batch_size):
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        generator=random_generator,
-        collate_fn=collator,
-        worker_init_fn=seed_worker
-    )
-
-train_clean_dataloader = create_dataloader(clean_splits["train"], batch_size)
-train_noise_dataloader = create_dataloader(noise_splits["train"], batch_size)
-test_clean_dataloader = create_dataloader(clean_splits["test"], batch_size)
-test_noise_dataloader = create_dataloader(noise_splits["test"], batch_size)
-
-
-SAMPLE_RATE = 48000
-models = {"AudioDec_Denoise": define_AD_model(), "Ours": load_flagship()}
+models = {
+    "GradClip2": load_flagship("Refactored_GradClip2_checkpoint-163768.pkl"),
+    "24KHz_GradClip4": load_flagship("24kHz-Multi-Mel_checkpoint-138446.pkl"),
+}
 
 # make test directories
 observation_counters = {}
 for model_name in models:
-    path = os.path.join("test_out",model_name)
+    path = os.path.join("test_out", model_name)
     if not os.path.exists(path):
         os.makedirs(path)
     observation_counters[model_name] = 0
 
-def infer(clean_dataloader,noise_dataloader):
+
+def infer(clean_dataloader, noise_dataloader):
     for i_batch, (clean_sample_batch, noise_sample_batch) in enumerate(
             zip(clean_dataloader, noise_dataloader)):
 
@@ -182,15 +134,15 @@ def infer(clean_dataloader,noise_dataloader):
         for model_name, model in models.items():
             with torch.no_grad():
                 y = model(mixed_samples)
-                if isinstance(y,tuple) or isinstance(y,list):
+                if isinstance(y, tuple) or isinstance(y, list):
                     y = y[0]
                 y = y.detach()
                 for o in y:
-                    path_to_output = os.path.join("test_out",model_name,f"test-{observation_counters[model_name]}.wav")
-                    torchaudio.save(path_to_output,o,SAMPLE_RATE, backend="soundfile")
+                    path_to_output = os.path.join("test_out", model_name,
+                                                  f"test-{observation_counters[model_name]}.wav")
+                    torchaudio.save(path_to_output, o, SAMPLE_RATE, backend="soundfile")
                     observation_counters[model_name] += 1
 
 
-
-infer(train_clean_dataloader,train_noise_dataloader)
-infer(test_clean_dataloader,test_noise_dataloader)
+# infer(train_clean_dataloader,train_noise_dataloader)
+infer(test_clean_dataloader, test_noise_dataloader)
