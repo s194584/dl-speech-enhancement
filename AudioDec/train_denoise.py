@@ -83,6 +83,7 @@ model: dict[str, torch.nn.Module] = {}
 path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
 
 config = load_config(path_to_config)
+task.connect_configuration(config)
 model["generator"] = GeneratorAudioDec(**config["generator_params"]).to(device)
 
 ## Discriminator
