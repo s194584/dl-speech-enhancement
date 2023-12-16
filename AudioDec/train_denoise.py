@@ -103,8 +103,8 @@ model["discriminator"] = model["discriminator"].to(device)
 #     betas: [0.5, 0.9]
 #     weight_decay: 0.0
 optimizer = {}
-optimizer["generator"] = Adam(model["generator"].parameters(), lr=1.0e-4)
-optimizer["discriminator"] = Adam(model["discriminator"].parameters(), lr=2.0e-4)
+optimizer["generator"] = Adam(model["generator"].parameters(), **config["generator_optimizer_params"])
+optimizer["discriminator"] = Adam(model["discriminator"].parameters(), **config["discriminator_optimizer_params"])
 
 
 # model_sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(model)
