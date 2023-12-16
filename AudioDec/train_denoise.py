@@ -26,6 +26,16 @@ import yaml
 from clearml import Task
 from argparse import ArgumentParser
 
+def load_config(path_to_config):
+    with open(path_to_config, "r") as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+
+    return config
+
+
+path_to_config = os.path.join("config", "denoise", "symAD_custom.yaml")
+config = load_config(path_to_config)
+
 parser = ArgumentParser()
 parser.add_argument("-e", "--environment", default="LAPTOP")
 parser.add_argument("-sr", "--sample_rate", default=48000)
@@ -46,7 +56,7 @@ if ENVIRONMENT == "LAPTOP":
     logger = task.get_logger()
     torch.set_num_threads(4)
 elif ENVIRONMENT == "HPC":
-    task_name = "Grad-24k_"
+    task_name = config["experiment_name"]
     task = Task.init("dl-speech-enhancement", task_name)
     logger = task.get_logger()
     CLEAN_PATH = "/work3/s164396/data/DNS-Challenge-4/datasets_fullband/clean_fullband/vctk_wav48_silence_trimmed"
@@ -58,16 +68,7 @@ else:
 
 
 # Loading config file
-def load_config(path_to_config):
-    with open(path_to_config, "r") as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
 
-    return config
-
-
-path_to_config = os.path.join("config", "denoise", "symAD_custom.yaml")
-
-config = load_config(path_to_config)
 task.connect_configuration(config)
 
 SAMPLE_RATE = int(config["sample_rate"])

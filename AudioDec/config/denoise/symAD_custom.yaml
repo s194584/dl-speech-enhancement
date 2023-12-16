@@ -15,6 +15,7 @@ sample_rate: &sampling_rate 48000
 ###########################################################
 #                   MODEL SETTING                         #
 ###########################################################
+experiment_name: "48KHz-NDR8"
 epochs: 500
 epoch_to_enable_discriminator: 2
 noise_dropout_rate: 0.8
