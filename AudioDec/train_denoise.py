@@ -136,18 +136,20 @@ criterion = {
 }
 lambda_adv = 1
 
+loss_constituents = {}
+
 
 def calculate_generator_loss(pred, target):
-    gen_loss = int(config["lambda_mel_loss"]) * measures["Mel-loss"](
-        pred, target
-    )
-    if model["discriminator"] != None:
+    mel_loss = int(config["lambda_mel_loss"]) * measures["Mel-loss"](pred, target)
+    adv_loss = torch.tensor(0)
+    feat_loss = torch.tensor(0)
+    if model["discriminator"] is not None:
         p_ = model["discriminator"](pred)
         with torch.no_grad():
             p = model["discriminator"](target)
-        gen_loss += criterion["gen_adv"](pred) * int(config["lambda_adv"])
-        gen_loss += criterion["feat_match"](p_, p) * int(config["lambda_feat_match"])
-    return gen_loss
+        adv_loss = int(config["lambda_adv"]) * criterion["gen_adv"](pred)
+        feat_loss = int(config["lambda_feat_match"]) * criterion["feat_match"](p_, p)
+    return mel_loss + adv_loss + feat_loss, (("mel_loss",mel_loss), ("adv_loss",adv_loss), ("feat_loss",feat_loss))
 
 
 def calculate_discriminator_loss(pred, target):
@@ -165,7 +167,7 @@ def calculate_discriminator_loss(pred, target):
 clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, SAMPLE_RATE)
 noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, SAMPLE_RATE)
 
-batch_length = 1*SAMPLE_RATE
+batch_length = 1 * SAMPLE_RATE
 if ENVIRONMENT == "LAPTOP":
     batch_size = 4
 else:
@@ -201,7 +203,6 @@ def print_gradients(model):
     logger.report_scalar("Gradients", "Minimum", min_grad, steps)
     logger.report_scalar("Gradients", "Average (Abs)", avg_grad, steps)
 
-
 def model_step(target, x, mode='train'):
     x = x.to(device)
     target = target.to(device)
@@ -220,11 +221,11 @@ def model_step(target, x, mode='train'):
     y_pred = model['generator'](x)
 
     # Generator loss & backprop
-    gen_loss = calculate_generator_loss(y_pred, target)
+    gen_loss, loss_fragments = calculate_generator_loss(y_pred, target)
+
     if mode == 'train':
         optimizer["generator"].zero_grad()
         gen_loss.backward()
-
 
         # Clip gradient
         if config["generator_grad_norm"] > 0:
@@ -252,7 +253,7 @@ def model_step(target, x, mode='train'):
                     config["discriminator_grad_norm"],
                 )
             optimizer["discriminator"].step()
-    return gen_loss, dis_loss
+    return gen_loss, dis_loss, loss_fragments
 
 
 start_time = time.perf_counter()
@@ -300,7 +301,7 @@ for epoch in epochs:
             torch.randint(10, 20, (1,)).to(device),
         )
 
-        gen_loss, dis_loss = model_step(clean_sample_batch, mixed_samples)
+        gen_loss, dis_loss, loss_fragments = model_step(clean_sample_batch, mixed_samples)
         gen_loss, dis_loss = gen_loss.item(), dis_loss.item()
         train_losses["generator"].append(gen_loss)
         train_losses["discriminator"].append(dis_loss)
@@ -309,12 +310,17 @@ for epoch in epochs:
 
         if steps % 100 == 0 or ENVIRONMENT == "LAPTOP":
             report_time("Training")
+            print_gradients(model["generator"])
             logger.report_scalar(
                 "Generator Batch Loss", "Train", gen_loss, iteration=train_steps
             )
             logger.report_scalar(
                 "Discriminator Batch Loss", "Train", dis_loss, iteration=train_steps
             )
+            for name, loss in loss_fragments:
+                logger.report_scalar(
+                    "Generator Batch Loss", name, loss, iteration=train_steps
+                )
 
     avg_gen_train_loss = np.mean(train_losses["generator"])
     avg_dis_train_loss = np.mean(train_losses["discriminator"])
@@ -348,7 +354,7 @@ for epoch in epochs:
         )
 
         with torch.no_grad():
-            _gen_val_loss, _dis_val_loss = model_step(
+            _gen_val_loss, _dis_val_loss, loss_fragments = model_step(
                 clean_sample_batch, mixed_samples, mode='eval'
             )
             gen_val_loss += _gen_val_loss.item()
