@@ -33,10 +33,7 @@ parser.add_argument("-s", "--seed", default=82)
 parser.add_argument("-ndr", "--noise_dropout_rate", default=0.5)
 
 args = parser.parse_args()
-SAMPLE_RATE = int(args.sample_rate)
 ENVIRONMENT = args.environment
-NOISE_DROPOUT_RATE = float(args.noise_dropout_rate)
-SEED = int(args.seed)
 
 if ENVIRONMENT == "LAPTOP":
     CLEAN_PATH = "corpus/train/clean"
@@ -60,12 +57,24 @@ else:
     raise Exception("Illegal argument: " + ENVIRONMENT)
 
 
+# Loading config file
 def load_config(path_to_config):
     with open(path_to_config, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
     return config
 
+
+path_to_config = os.path.join("config", "denoise", "symAD_custom.yaml")
+
+config = load_config(path_to_config)
+task.connect_configuration(config)
+
+SAMPLE_RATE = int(config["sample_rate"])
+NOISE_DROPOUT_RATE = float(config["noise_dropout_rate"])
+SEED = int(config["seed"])
+EPOCHS = int(config["epochs"])
+EPOCH_TO_ENABLE_DISCRIMINATOR = int(config["epoch_to_enable_discriminator"])
 
 # device assignment
 if ENVIRONMENT == "LAPTOP":
@@ -80,10 +89,6 @@ device = torch.device(tx_device)
 # Loading model #####################
 # model = "vctk_denoise"
 model: dict[str, torch.nn.Module] = {}
-path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
-
-config = load_config(path_to_config)
-task.connect_configuration(config)
 model["generator"] = GeneratorAudioDec(**config["generator_params"]).to(device)
 
 ## Discriminator
@@ -141,7 +146,7 @@ def calculate_generator_loss(pred, target):
     mel_loss = int(config["lambda_mel_loss"]) * measures["Mel-loss"](pred, target)
     adv_loss = torch.tensor(0)
     feat_loss = torch.tensor(0)
-    if model["discriminator"] is not None:
+    if discriminator_enabled:
         p_ = model["discriminator"](pred)
         with torch.no_grad():
             p = model["discriminator"](target)
@@ -162,6 +167,8 @@ def calculate_discriminator_loss(pred, target):
 
 
 # Loading data ######################
+
+
 clean_dataset = AudioDataset(CLEAN_PATH, CLEAN_ROOT, SAMPLE_RATE)
 noise_dataset = AudioDataset(NOISE_PATH, NOISE_ROOT, SAMPLE_RATE)
 
@@ -169,7 +176,7 @@ batch_length = 1 * SAMPLE_RATE
 if ENVIRONMENT == "LAPTOP":
     batch_size = 4
 else:
-    batch_size = 10
+    batch_size = int(config["batch_size"])
 
 split = [0.7, 0.15, 0.15]
 train_clean_dataloader, val_clean_dataloader, _ = get_dataloaders(clean_dataset, split, batch_size, batch_length,
@@ -210,7 +217,7 @@ def model_step(target, x, mode='train'):
     else:
         model["generator"].eval()
 
-    if model["discriminator"] is not None:
+    if discriminator_enabled:
         if mode == "train":
             model["discriminator"].train()
         else:
@@ -235,8 +242,8 @@ def model_step(target, x, mode='train'):
         optimizer["generator"].step()
 
     # Discriminator loss
-    dis_loss = torch.tensor(1)
-    if model["discriminator"] is not None:
+    dis_loss = torch.tensor(0)
+    if discriminator_enabled:
         with torch.no_grad():
             y_pred = model['generator'](x)
 
@@ -256,10 +263,11 @@ def model_step(target, x, mode='train'):
 
 
 start_time = time.perf_counter()
-steps = 0
-epochs = [i for i in range(500)]
-train_steps = 0
+
 discriminator_enabled = False
+
+steps = 0
+train_steps = 0
 
 print("Start training")
 
@@ -282,11 +290,14 @@ def noise_dropout(clean_sample_batch, noise_sample_batch, noise_dropout_rate):
     return noise_sample_batch
 
 
-for epoch in epochs:
+for epoch in range(EPOCHS):
     # Training loop #####################
+    if model["discriminator"] is not None and epoch == EPOCH_TO_ENABLE_DISCRIMINATOR:
+        discriminator_enabled = True
+
     i_batch = 0
     train_losses = {"generator": [], "discriminator": []}
-    print("New epoch")
+    print(f"Epoch {epoch}")
     for i_batch, (clean_batch, noise_batch) in enumerate(zip(train_clean_dataloader, train_noise_dataloader)):
         # Weak computer break
         if ENVIRONMENT == "LAPTOP" and i_batch == 3:
