@@ -30,12 +30,13 @@ parser = ArgumentParser()
 parser.add_argument("-e", "--environment", default="LAPTOP")
 parser.add_argument("-sr", "--sample_rate", default=48000)
 parser.add_argument("-s", "--seed", default=82)
-parser.add_argument("-asr", "--audio_sample_rate", default=48000)
+parser.add_argument("-ndr", "--noise_dropout_rate", default=0.5)
 
 args = parser.parse_args()
 SAMPLE_RATE = int(args.sample_rate)
 ENVIRONMENT = args.environment
-# ENVIRONMENT = "HPC"
+NOISE_DROPOUT_RATE = float(args.noise_dropout_rate)
+SEED = int(args.seed)
 
 if ENVIRONMENT == "LAPTOP":
     CLEAN_PATH = "corpus/train/clean"
@@ -43,7 +44,7 @@ if ENVIRONMENT == "LAPTOP":
     NOISE_PATH = "corpus/train/noise"
     NOISE_ROOT = "noise"
 
-    task_name = "Laptop-TEST"
+    task_name = "Laptop-TEST-dropout"
     task = Task.init("dl-speech-enhancement", task_name)
     logger = task.get_logger()
     torch.set_num_threads(4)
@@ -65,10 +66,6 @@ def load_config(path_to_config):
 
     return config
 
-
-# Seeds for reproducibility #########
-generator_seed = int(args.seed)
-random_generator = torch.manual_seed(generator_seed)
 
 # device assignment
 if ENVIRONMENT == "LAPTOP":
@@ -149,7 +146,7 @@ def calculate_generator_loss(pred, target):
             p = model["discriminator"](target)
         adv_loss = int(config["lambda_adv"]) * criterion["gen_adv"](pred)
         feat_loss = int(config["lambda_feat_match"]) * criterion["feat_match"](p_, p)
-    return mel_loss + adv_loss + feat_loss, (("mel_loss",mel_loss), ("adv_loss",adv_loss), ("feat_loss",feat_loss))
+    return mel_loss + adv_loss + feat_loss, (("mel_loss", mel_loss), ("adv_loss", adv_loss), ("feat_loss", feat_loss))
 
 
 def calculate_discriminator_loss(pred, target):
@@ -175,9 +172,9 @@ else:
 
 split = [0.7, 0.15, 0.15]
 train_clean_dataloader, val_clean_dataloader, _ = get_dataloaders(clean_dataset, split, batch_size, batch_length,
-                                                                  args.seed)
+                                                                  SEED)
 train_noise_dataloader, val_noise_dataloader, _ = get_dataloaders(noise_dataset, split, batch_size, batch_length,
-                                                                  args.seed)
+                                                                  SEED)
 
 
 def print_gradients(model):
@@ -202,6 +199,7 @@ def print_gradients(model):
     logger.report_scalar("Gradients", "Maximum", max_grad, steps)
     logger.report_scalar("Gradients", "Minimum", min_grad, steps)
     logger.report_scalar("Gradients", "Average (Abs)", avg_grad, steps)
+
 
 def model_step(target, x, mode='train'):
     x = x.to(device)
@@ -259,11 +257,8 @@ def model_step(target, x, mode='train'):
 start_time = time.perf_counter()
 steps = 0
 epochs = [i for i in range(500)]
-# Maybe have an epoch here
-train_acc_batch_size = 0
 train_steps = 0
-model["discriminator"] = None
-record_audio_snippets = False
+discriminator_enabled = False
 
 print("Start training")
 
@@ -279,34 +274,42 @@ def report_time(phase):
     print(f"{phase}: Step {train_steps} \t Time: {hours}:{minutes}:{seconds}")
 
 
+def noise_dropout(clean_sample_batch, noise_sample_batch, noise_dropout_rate):
+    for i, clean_sample in enumerate(clean_sample_batch):
+        if torch.rand((1,)).item() <= noise_dropout_rate:
+            noise_sample_batch[i] = clean_sample
+    return noise_sample_batch
+
+
 for epoch in epochs:
     # Training loop #####################
     i_batch = 0
     train_losses = {"generator": [], "discriminator": []}
     print("New epoch")
-    for i_batch, (clean_sample_batch, noise_sample_batch) in enumerate(
-            zip(train_clean_dataloader, train_noise_dataloader)
-    ):
+    for i_batch, (clean_batch, noise_batch) in enumerate(zip(train_clean_dataloader, train_noise_dataloader)):
+        # Weak computer break
         if ENVIRONMENT == "LAPTOP" and i_batch == 3:
             break
-        if len(clean_sample_batch) > len(noise_sample_batch):
-            clean_sample_batch = clean_sample_batch[: len(noise_sample_batch)]
-        else:
-            noise_sample_batch = noise_sample_batch[: len(clean_sample_batch)]
 
-        # Mix noise
+        # Mix noise & Noise Dropout
         mixed_samples = add_noise(
-            clean_sample_batch,
-            noise_sample_batch,
+            clean_batch,
+            noise_batch,
             torch.randint(10, 20, (1,)).to(device),
         )
+        if NOISE_DROPOUT_RATE != 0.0:
+            noise_batch = noise_dropout(clean_batch, noise_batch, NOISE_DROPOUT_RATE)
 
-        gen_loss, dis_loss, loss_fragments = model_step(clean_sample_batch, mixed_samples)
+        # Model train step
+        gen_loss, dis_loss, loss_fragments = model_step(clean_batch, mixed_samples)
+
+        steps += 1
+        train_steps += 1
+
+        # Reporting
         gen_loss, dis_loss = gen_loss.item(), dis_loss.item()
         train_losses["generator"].append(gen_loss)
         train_losses["discriminator"].append(dis_loss)
-        steps += 1
-        train_steps += 1
 
         if steps % 100 == 0 or ENVIRONMENT == "LAPTOP":
             report_time("Training")
@@ -322,10 +325,12 @@ for epoch in epochs:
                     "Generator Batch Loss", name, loss, iteration=train_steps
                 )
 
+    # Avg losses after training
     avg_gen_train_loss = np.mean(train_losses["generator"])
     avg_dis_train_loss = np.mean(train_losses["discriminator"])
-    # Do a checkpoint
-    if ENVIRONMENT != "LAPTOP" and epoch % 1 == 0:
+
+    # Store checkpoint
+    if ENVIRONMENT != "LAPTOP" and epoch % 5 == 0:
         check_point_path = os.path.join(
             "job_out", f"{task_name}checkpoint-{train_steps}.pkl"
         )
@@ -335,27 +340,21 @@ for epoch in epochs:
     gen_val_loss = 0
     dis_val_loss = 0
     i_batch = 0
-    for i_batch, (clean_sample_batch, noise_sample_batch) in enumerate(
-            zip(val_clean_dataloader, val_noise_dataloader)
-    ):
-        if len(clean_sample_batch) > len(noise_sample_batch):
-            clean_sample_batch = clean_sample_batch[: len(noise_sample_batch)]
-        else:
-            noise_sample_batch = noise_sample_batch[: len(clean_sample_batch)]
+    for i_batch, (clean_batch, noise_batch) in enumerate(zip(val_clean_dataloader, val_noise_dataloader)):
+        # Weak computer break
         if ENVIRONMENT == "LAPTOP" and i_batch == 3:
             break
-        clean_sample_batch.to(device)
-        noise_sample_batch.to(device)
+
         # Mix noise
         mixed_samples = add_noise(
-            clean_sample_batch,
-            noise_sample_batch,
+            clean_batch,
+            noise_batch,
             torch.randint(10, 20, (1,)).to(device),
         )
 
         with torch.no_grad():
             _gen_val_loss, _dis_val_loss, loss_fragments = model_step(
-                clean_sample_batch, mixed_samples, mode='eval'
+                clean_batch, mixed_samples, mode='eval'
             )
             gen_val_loss += _gen_val_loss.item()
             dis_val_loss += _dis_val_loss.item()
@@ -363,6 +362,8 @@ for epoch in epochs:
         if steps % 100 == 0 or ENVIRONMENT == "LAPTOP":
             report_time("Validation")
         steps += 1
+
+    # Reporting epoch losses
     avg_gen_val_loss = gen_val_loss / (i_batch + 1)
     avg_dis_val_loss = dis_val_loss / (i_batch + 1)
     logger.report_scalar("Generator Loss", "Train", avg_gen_train_loss, iteration=epoch)
