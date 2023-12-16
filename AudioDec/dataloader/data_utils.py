@@ -31,6 +31,7 @@ def create_dataloader(dataset, batch_size, batch_length, generator):
         collate_fn=CollaterAudio(batch_length),
         worker_init_fn=seed_worker,
         drop_last=True,
+        pin_memory=True,
     )
 
 
