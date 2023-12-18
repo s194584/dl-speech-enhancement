@@ -17,9 +17,10 @@ sample_rate: &sampling_rate 48000
 ###########################################################
 experiment_name: "48KHz-NDR8"
 epochs: 500
-epoch_to_enable_discriminator: 2
-noise_dropout_rate: 0.8
-noise_dropout_rate_decay: 0.01 # Step size per epoch
+epoch_to_enable_discriminator: 3
+noise_dropout_rate: 1.0
+noise_dropout_rate_decay: 0.05 # Step size per epoch
+epoch_to_enable_noise_dropout_decay: 15
 seed: 93
 
 generator_params:

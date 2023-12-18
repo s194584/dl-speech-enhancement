@@ -70,10 +70,11 @@ task.connect_configuration(config)
 
 SAMPLE_RATE = config["sample_rate"]
 NOISE_DROPOUT_RATE = config["noise_dropout_rate"]
+NOISE_DROPOUT_RATE_DECAY = config["noise_dropout_rate_decay"]
 SEED = config["seed"]
 EPOCHS = config["epochs"]
 EPOCH_TO_ENABLE_DISCRIMINATOR = config["epoch_to_enable_discriminator"]
-
+EPOCH_TO_ENABLE_NOISE_DROPOUT_DECAY = config["epoch_to_enable_noise_dropout_decay"]
 # device assignment
 if ENVIRONMENT == "LAPTOP":
     tx_device = "cpu"
@@ -85,7 +86,6 @@ else:
 device = torch.device(tx_device)
 
 # Loading model #####################
-# model = "vctk_denoise"
 model: dict[str, torch.nn.Module] = {}
 model["generator"] = GeneratorAudioDec(**config["generator_params"]).to(device)
 
@@ -94,18 +94,10 @@ model["discriminator"] = DiscriminatorHiFiGAN(**config["discriminator_params"])
 model["discriminator"] = model["discriminator"].to(device)
 
 # Optimizer
-# generator_optimizer_type: Adam
-# generator_optimizer_params:
-#     lr: 1.0e-4
-#     betas: [0.5, 0.9]
-#     weight_decay: 0.0
 optimizer = {}
 optimizer["generator"] = Adam(model["generator"].parameters(), **config["generator_optimizer_params"])
 optimizer["discriminator"] = Adam(model["discriminator"].parameters(), **config["discriminator_optimizer_params"])
 
-
-# model_sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(model)
-# TODOO - Create own config file since we don't use theirs as much anymore
 def load_from_pretrained(checkpoint):
     state_dict = torch.load(checkpoint, map_location="cpu")
     # model['generator'].load_state_dict(state_dict["model"]["generator"])
@@ -118,12 +110,6 @@ def load_from_pretrained(checkpoint):
 
 measures = {
     "MAE": nn.L1Loss().to(device),
-    # 'MSE': nn.MSELoss().to(device),
-    # 'SNR': SignalNoiseRatio().to(device),
-    # 'SDR': SignalDistortionRatio().to(device),
-    # 'SI-SDR': ScaleInvariantSignalDistortionRatio().to(device),
-    # 'PESQ': PerceptualEvaluationSpeechQuality(fs=16000, mode='wb'),
-    # 'STOI': ShortTimeObjectiveIntelligibility(48000),
     "Mel-loss": MultiMelSpectrogramLoss(**config["mel_loss_params"]).to(device),
 }
 criterion = {
@@ -292,6 +278,9 @@ for epoch in range(EPOCHS):
     # Training loop #####################
     if model["discriminator"] is not None and epoch == EPOCH_TO_ENABLE_DISCRIMINATOR:
         discriminator_enabled = True
+
+    if epoch > EPOCH_TO_ENABLE_NOISE_DROPOUT_DECAY:
+        NOISE_DROPOUT_RATE -= NOISE_DROPOUT_RATE_DECAY
 
     i_batch = 0
     train_losses = {"generator": [], "discriminator": []}
