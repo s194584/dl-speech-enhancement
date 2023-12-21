@@ -13,7 +13,7 @@ from losses import (
 )
 from dataloader.AudioDataset import AudioDataset
 from torchmetrics.audio import (
-    SignalNoiseRatio,
+    SignalNoiseRatio, SignalDistortionRatio, ScaleInvariantSignalDistortionRatio,
     # SignalDistortionRatio,
     # ShortTimeObjectiveIntelligibility
 )
@@ -26,6 +26,7 @@ import yaml
 from clearml import Task
 from argparse import ArgumentParser
 
+
 def load_config(path_to_config):
     with open(path_to_config, "r") as f:
         config = yaml.safe_load(f)
@@ -33,11 +34,13 @@ def load_config(path_to_config):
     return config
 
 
-path_to_config = os.path.join("config", "denoise", "symAD_custom.yaml")
-config = load_config(path_to_config)
-
 parser = ArgumentParser()
 parser.add_argument("-e", "--environment", default="LAPTOP")
+parser.add_argument("-c", "--config", default="symAD_custom.yaml")
+
+path_to_config = os.path.join("config", "denoise", parser.config)
+config = load_config(path_to_config)
+
 
 args = parser.parse_args()
 ENVIRONMENT = args.environment
@@ -62,7 +65,6 @@ elif ENVIRONMENT == "HPC":
     NOISE_ROOT = "noise_fullband"
 else:
     raise Exception("Illegal argument: " + ENVIRONMENT)
-
 
 # Loading config file
 
@@ -98,20 +100,18 @@ optimizer = {}
 optimizer["generator"] = Adam(model["generator"].parameters(), **config["generator_optimizer_params"])
 optimizer["discriminator"] = Adam(model["discriminator"].parameters(), **config["discriminator_optimizer_params"])
 
-def load_from_pretrained(checkpoint):
-    state_dict = torch.load(checkpoint, map_location="cpu")
-    # model['generator'].load_state_dict(state_dict["model"]["generator"])
-    model["generator"].load_state_dict(state_dict)
-
-
 ## Generator
-# encoder_checkpoint = os.path.join("exp", "denoise", "HPC-Fresh-Melcheckpoint-83745.pkl")
-# load_from_pretrained(encoder_checkpoint)
+if config["initial_model"] != "":
+    checkpoint = os.path.join("job_out", config["initial_model"])
+    state_dict = torch.load(checkpoint, map_location=device)
+    model["generator"].load_state_dict(state_dict)
 
 measures = {
     "MAE": nn.L1Loss().to(device),
+    'SNR': SignalNoiseRatio().to(device),
     "Mel-loss": MultiMelSpectrogramLoss(**config["mel_loss_params"]).to(device),
 }
+SIGMOID = nn.Sigmoid().to(device)
 criterion = {
     "gen_adv": GeneratorAdversarialLoss(**config["generator_adv_loss_params"]).to(
         tx_device
@@ -128,6 +128,7 @@ loss_constituents = {}
 
 def calculate_generator_loss(pred, target):
     mel_loss = config["lambda_mel_loss"] * measures["Mel-loss"](pred, target)
+    snr_loss = config["lambda_snr_loss"] * (1 - SIGMOID(measures['SNR'](pred, target)))
     adv_loss = torch.tensor(0)
     feat_loss = torch.tensor(0)
     if discriminator_enabled:
@@ -136,7 +137,8 @@ def calculate_generator_loss(pred, target):
             p = model["discriminator"](target)
         adv_loss = config["lambda_adv"] * criterion["gen_adv"](pred)
         feat_loss = config["lambda_feat_match"] * criterion["feat_match"](p_, p)
-    return mel_loss + adv_loss + feat_loss, (("mel_loss", mel_loss), ("adv_loss", adv_loss), ("feat_loss", feat_loss))
+    return mel_loss + adv_loss + feat_loss + snr_loss, (
+    ("mel_loss", mel_loss), ("adv_loss", adv_loss), ("feat_loss", feat_loss), ("snr_loss", snr_loss))
 
 
 def calculate_discriminator_loss(pred, target):
@@ -250,8 +252,8 @@ start_time = time.perf_counter()
 
 discriminator_enabled = False
 
-steps = 0
-train_steps = 0
+steps = config["step"]
+train_steps = config["step"]
 
 print("Start training")
 
@@ -329,7 +331,7 @@ for epoch in range(EPOCHS):
     avg_dis_train_loss = np.mean(train_losses["discriminator"])
 
     # Store checkpoint
-    if ENVIRONMENT != "LAPTOP" and epoch % 5 == 0:
+    if ENVIRONMENT != "LAPTOP" and epoch % 1 == 0:
         check_point_path = os.path.join(
             "job_out", f"{task_name}checkpoint-{train_steps}.pkl"
         )
