@@ -31,28 +31,18 @@ class AudioDec(AudioCodec):
 
     def _load_encoder(self, checkpoint):
         # load config
-        config = self._load_config(checkpoint)
+        config = self._load_config("config\\denoise\\symAD_custom.yaml")
         # load model
-        if config['model_type'] in ['symAudioDec', 'symAudioDecUniv']:
-            encoder = generator_audiodec
-        else:
-            raise NotImplementedError(f"Encoder type {config['model_type']} is not supported!")
-        encoder = encoder(**config['generator_params'])
+        encoder = generator_audiodec(**config['generator_params'])
         encoder.load_state_dict(torch.load(checkpoint, map_location='cpu'))
         return encoder
 
 
     def _load_decoder(self, checkpoint):
         # load config
-        config = self._load_config(checkpoint)
+        config = self._load_config("config\\denoise\\symAD_custom.yaml")
         # load model
-        if config['model_type'] in ['symAudioDec', 'symAudioDecUniv']:
-            decoder = generator_audiodec
-        elif config['model_type'] in ['HiFiGAN', 'UnivNet']:
-            decoder = generator_hifigan
-        else:
-            raise NotImplementedError(f"Decoder {config['model_type']} is not supported!")
-        decoder = decoder(**config['generator_params'])
+        decoder = generator_audiodec(**config['generator_params'])
         decoder.load_state_dict(torch.load(checkpoint, map_location='cpu'))
         return decoder
 

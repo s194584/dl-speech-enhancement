@@ -43,8 +43,8 @@ def main():
 
     # model assignment
     # sample_rate, encoder_checkpoint, decoder_checkpoint = assign_model(args.model)
-    model_path = os.path.join("exp","denoise","MelL1_Adam-adjusted_checkpoint-111661.pkl")
-    sample_rate = 48000
+    model_path = os.path.join("notebook_files","model.pkl")
+    sample_rate = 24000
 
     # AudioDec initinalize
     print("AudioDec initinalizing!")

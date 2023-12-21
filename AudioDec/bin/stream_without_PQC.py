@@ -45,10 +45,8 @@ class AudioCodec(abc.ABC):
         pass
 
 
-    def _load_config(self, checkpoint, config_name='config.yml'):
-        dirname = os.path.dirname(checkpoint)
-        config_path = os.path.join(dirname, config_name)
-        with open(config_path) as f:
+    def _load_config(self, path_to_config):
+        with open(path_to_config) as f:
             config = yaml.load(f, Loader=yaml.Loader)
         return config
 
