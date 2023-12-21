@@ -5,7 +5,8 @@ import soundfile as sf
 import numpy as np
 import torchaudio
 
-from models.autoencoder_without_PQC.AudioDec import Generator as generator_audiodec
+from models.autoencoder_without_PQC.AudioDec import Generator as generator_audiodec_wo
+# from models.autoencoder.AudioDec import Generator as generator_audiodec
 import math
 import yaml
 
@@ -25,8 +26,6 @@ from torch import nn, functional
 from torchmetrics.audio import SignalNoiseRatio, ScaleInvariantSignalDistortionRatio, SignalDistortionRatio, \
     ShortTimeObjectiveIntelligibility
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
-
-
 
 
 def load_config(path_to_config):
@@ -50,7 +49,6 @@ def add_noise(speech, noise, snr=10):
 
 
 device = "cpu"
-
 
 
 ##########################################################################
@@ -115,8 +113,9 @@ def evaluate(estimate, reference):
     print(f"PESQ score: {pesq_mix}")
     print(f"STOI score: {stoi_mix}")
 
+
 ##########################################################################
-def reconstruct_test(model, device, checkpoint,tag):
+def reconstruct_test(model, device, checkpoint, tag):
     clean_file_path = "corpus/test/book_00002_chp_0005_reader_11980_3_seg_0.wav"
     noise_file_path = "corpus/train/noise_single/__HpItICRe0.wav"
     pred_output_path = f"job_out/{tag}___{checkpoint}___reconstructed.wav"
@@ -131,8 +130,8 @@ def reconstruct_test(model, device, checkpoint,tag):
     else:
         noise_audio = torch.narrow(noise_audio, 1, 0, clean_audio.shape[1])
 
-    clean_audio = torchaudio.functional.resample(clean_audio,clean_sr,SAMPLE_RATE)
-    noise_audio = torchaudio.functional.resample(noise_audio,noise_sr,SAMPLE_RATE)
+    clean_audio = torchaudio.functional.resample(clean_audio, clean_sr, SAMPLE_RATE)
+    noise_audio = torchaudio.functional.resample(noise_audio, noise_sr, SAMPLE_RATE)
 
     audio = add_noise(clean_audio, noise_audio, 10)
 
@@ -142,9 +141,12 @@ def reconstruct_test(model, device, checkpoint,tag):
     # audio_t = np.expand_dims(audio_t, axis=0)  # (T, C) -> (C, 1, T)
     with torch.no_grad():
         audio_t = torch.tensor(audio_t).to(device)
-        y = model(audio_t,clean_sr)[0]
+        y = model(audio_t)[0]
+        if len(y.shape) == 3:
+            y = y[0]
         torchaudio.save(pred_output_path, y, SAMPLE_RATE)
     return clean_audio, audio, y
+
 
 SAMPLE_RATE = 48000
 # Load model
@@ -152,12 +154,11 @@ model = "vctk_denoise"
 path_to_config = os.path.join("config", "denoise", "symAD_vctk_48000_hop300.yaml")
 
 config = load_config(path_to_config)
-generator_model = generator_audiodec(model_sample_rate=48000,**config["generator_params"])
+generator_model = generator_audiodec_wo(**config["generator_params"])
 
 tag = "Mel_Shape"
-checkpoint = 59552
-model_checkpoint = os.path.join("exp", "denoise", f"Mel_Shape_checkpoint-59552.pkl")
-
+checkpoint = 37220
+model_checkpoint = os.path.join("exp", "denoise", f"checkpoint-22328.pkl")
 
 state_dict = torch.load(model_checkpoint, map_location="cpu")
 generator_model.load_state_dict(state_dict)
@@ -167,6 +168,7 @@ decoder = generator_model.decoder
 decoder.to(device=device)
 
 clean, mixed, pred = reconstruct_test(generator_model, "cpu", checkpoint, tag)
+
 
 def plot_specgram(waveforms, sample_rate, title, xlim=None):
     figure, axes = plt.subplots(len(waveforms), 1)
@@ -180,11 +182,13 @@ def plot_specgram(waveforms, sample_rate, title, xlim=None):
 
 mel_spectrogram = transforms.MelSpectrogram(48000)
 mae = nn.L1Loss()
+
+
 def Mel_L1(pred, target):
     pred_mel = mel_spectrogram(pred)
     target_mel = mel_spectrogram(target)
 
-    return mae(pred_mel,target_mel)
+    return mae(pred_mel, target_mel)
 
 
 def print_measures(waveform1, waveform2):
@@ -199,21 +203,31 @@ def print_measures(waveform1, waveform2):
         'STOI': ShortTimeObjectiveIntelligibility(48000),
         'Mel-L1': Mel_L1,
     }
+    sig = nn.Sigmoid()
+    tanhh = nn.Tanh()
     for measure_name, measure in measures.items():
         if measure_name == 'PESQ':
             resampler = transforms.Resample(48000, 16000)
             print(f'{measure_name}: {measure(resampler(waveform1), resampler(waveform2))}')
         else:
-            print(f'{measure_name}: {measure(waveform1, waveform2)}')
+            # print(f'{measure_name}: {measure(waveform1, waveform2)}')
+            print(f'{measure_name} (SIGMOID): {1-sig(measure(waveform1, waveform2))}')
+            print(f'{measure_name} (SIGMOID): {1-sig(measure(waveform2, waveform1))}')
+            # print(f'{measure_name} (TANH): {tanhh(measure(waveform1, waveform2))}')
 
 
-waveform_clean = torchaudio.functional.resample(clean,SAMPLE_RATE,48000)
-waveform_mixed = torchaudio.functional.resample(mixed,SAMPLE_RATE,48000)
-waveform_pred = torchaudio.functional.resample(pred,SAMPLE_RATE,48000)
+waveform_clean = torchaudio.functional.resample(clean, SAMPLE_RATE, 48000)
+waveform_mixed = torchaudio.functional.resample(mixed, SAMPLE_RATE, 48000)
+waveform_pred = torchaudio.functional.resample(pred, SAMPLE_RATE, 48000)
 waveform_clean = torch.narrow(waveform_clean, 1, 0, waveform_pred.shape[1])
-
+print("Clean","Clean")
+print_measures(waveform_clean,waveform_clean)
+print()
+print("Pred","Clean")
+print_measures(waveform_pred,waveform_clean)
 # spectrogram = transform(waveform)
 plot_specgram([waveform_clean, waveform_mixed, waveform_pred], 48000, ["Clean", "Mixed", "Prediction"])
+
 
 def plot_waveform(waveforms, sample_rate, title="Waveform", xlim=None, ylim=None):
     figure, axes = plt.subplots(len(waveforms), 1)
@@ -226,19 +240,13 @@ def plot_waveform(waveforms, sample_rate, title="Waveform", xlim=None, ylim=None
         axes[c].plot(time_axis, waveform[0], linewidth=1)
         axes[c].grid(True)
         if num_channels > 1:
-          axes[c].set_ylabel(f'Channel {c+1}')
+            axes[c].set_ylabel(f'Channel {c + 1}')
         if xlim:
-          axes[c].set_xlim(xlim)
+            axes[c].set_xlim(xlim)
         if ylim:
-          axes[c].set_ylim(ylim)
+            axes[c].set_ylim(ylim)
         figure.suptitle(title)
     plt.show(block=False)
 
-plot_waveform([waveform_clean, waveform_mixed, waveform_pred],48000,"Waveforms")
 
-
-
-
-
-
-
+plot_waveform([waveform_clean, waveform_mixed, waveform_pred], 48000, "Waveforms")
